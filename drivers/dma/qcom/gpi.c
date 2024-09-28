@@ -584,7 +584,7 @@ static inline void gpi_write_reg_field(struct gpii *gpii, void __iomem *addr,
 	gpi_write_reg(gpii, addr, val);
 }
 
-static inline void
+static __always_inline void
 gpi_update_reg(struct gpii *gpii, u32 offset, u32 mask, u32 val)
 {
 	void __iomem *addr = gpii->regs + offset;
@@ -1416,7 +1416,7 @@ static int gpi_alloc_ring(struct gpi_ring *ring, u32 elements,
 	len = 1 << bit;
 	ring->alloc_size = (len + (len - 1));
 	dev_dbg(gpii->gpi_dev->dev,
-		"#el:%u el_size:%u len:%u actual_len:%llu alloc_size:%lu\n",
+		"#el:%u el_size:%u len:%u actual_len:%llu alloc_size:%zu\n",
 		  elements, el_size, (elements * el_size), len,
 		  ring->alloc_size);
 
@@ -1424,7 +1424,7 @@ static int gpi_alloc_ring(struct gpi_ring *ring, u32 elements,
 					       ring->alloc_size,
 					       &ring->dma_handle, GFP_KERNEL);
 	if (!ring->pre_aligned) {
-		dev_err(gpii->gpi_dev->dev, "could not alloc size:%lu mem for ring\n",
+		dev_err(gpii->gpi_dev->dev, "could not alloc size:%zu mem for ring\n",
 			ring->alloc_size);
 		return -ENOMEM;
 	}
@@ -1444,8 +1444,8 @@ static int gpi_alloc_ring(struct gpi_ring *ring, u32 elements,
 	smp_wmb();
 
 	dev_dbg(gpii->gpi_dev->dev,
-		"phy_pre:0x%0llx phy_alig:0x%0llx len:%u el_size:%u elements:%u\n",
-		ring->dma_handle, ring->phys_addr, ring->len,
+		"phy_pre:%pad phy_alig:%pa len:%u el_size:%u elements:%u\n",
+		&ring->dma_handle, &ring->phys_addr, ring->len,
 		ring->el_size, ring->elements);
 
 	return 0;
@@ -1700,7 +1700,7 @@ static int gpi_create_i2c_tre(struct gchan *chan, struct gpi_desc *desc,
 
 		tre->dword[3] = u32_encode_bits(TRE_TYPE_DMA, TRE_FLAGS_TYPE);
 		tre->dword[3] |= u32_encode_bits(1, TRE_FLAGS_IEOT);
-	};
+	}
 
 	for (i = 0; i < tre_idx; i++)
 		dev_dbg(dev, "TRE:%d %x:%x:%x:%x\n", i, desc->tre[i].dword[0],
@@ -1754,10 +1754,14 @@ static int gpi_create_spi_tre(struct gchan *chan, struct gpi_desc *desc,
 		tre->dword[2] = u32_encode_bits(spi->rx_len, TRE_RX_LEN);
 
 		tre->dword[3] = u32_encode_bits(TRE_TYPE_GO, TRE_FLAGS_TYPE);
-		if (spi->cmd == SPI_RX)
+		if (spi->cmd == SPI_RX) {
 			tre->dword[3] |= u32_encode_bits(1, TRE_FLAGS_IEOB);
-		else
+		} else if (spi->cmd == SPI_TX) {
 			tre->dword[3] |= u32_encode_bits(1, TRE_FLAGS_CHAIN);
+		} else { /* SPI_DUPLEX */
+			tre->dword[3] |= u32_encode_bits(1, TRE_FLAGS_CHAIN);
+			tre->dword[3] |= u32_encode_bits(1, TRE_FLAGS_LINK);
+		}
 	}
 
 	/* create the dma tre */
@@ -1948,7 +1952,7 @@ static int gpi_ch_init(struct gchan *gchan)
 	return ret;
 
 error_start_chan:
-	for (i = i - 1; i >= 0; i++) {
+	for (i = i - 1; i >= 0; i--) {
 		gpi_stop_chan(&gpii->gchan[i]);
 		gpi_send_cmd(gpii, gchan, GPI_CH_CMD_RESET);
 	}
@@ -2148,6 +2152,7 @@ static int gpi_probe(struct platform_device *pdev)
 {
 	struct gpi_dev *gpi_dev;
 	unsigned int i;
+	u32 ee_offset;
 	int ret;
 
 	gpi_dev = devm_kzalloc(&pdev->dev, sizeof(*gpi_dev), GFP_KERNEL);
@@ -2174,6 +2179,9 @@ static int gpi_probe(struct platform_device *pdev)
 		dev_err(gpi_dev->dev, "missing 'gpii-mask' DT node\n");
 		return ret;
 	}
+
+	ee_offset = (uintptr_t)device_get_match_data(gpi_dev->dev);
+	gpi_dev->ee_base = gpi_dev->ee_base - ee_offset;
 
 	gpi_dev->ev_factor = EV_FACTOR;
 
@@ -2206,10 +2214,8 @@ static int gpi_probe(struct platform_device *pdev)
 
 		/* set up irq */
 		ret = platform_get_irq(pdev, i);
-		if (ret < 0) {
-			dev_err(gpi_dev->dev, "platform_get_irq failed for %d:%d\n", i, ret);
+		if (ret < 0)
 			return ret;
-		}
 		gpii->irq = ret;
 
 		/* set up channel specific register info */
@@ -2280,7 +2286,12 @@ static int gpi_probe(struct platform_device *pdev)
 }
 
 static const struct of_device_id gpi_of_match[] = {
-	{ .compatible = "qcom,sdm845-gpi-dma" },
+	{ .compatible = "qcom,sc7280-gpi-dma", .data = (void *)0x10000 },
+	{ .compatible = "qcom,sdm845-gpi-dma", .data = (void *)0x0 },
+	{ .compatible = "qcom,sm8150-gpi-dma", .data = (void *)0x0 },
+	{ .compatible = "qcom,sm8250-gpi-dma", .data = (void *)0x0 },
+	{ .compatible = "qcom,sm8350-gpi-dma", .data = (void *)0x10000 },
+	{ .compatible = "qcom,sm8450-gpi-dma", .data = (void *)0x10000 },
 	{ },
 };
 MODULE_DEVICE_TABLE(of, gpi_of_match);

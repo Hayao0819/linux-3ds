@@ -15,12 +15,14 @@
 #include <linux/syscalls.h>
 #include <linux/mm.h>
 #include <linux/highmem.h>
+#include <linux/pagemap.h>
 
 #include <asm/cacheflush.h>
 #include <asm/processor.h>
 #include <asm/cpu.h>
 #include <asm/cpu-features.h>
 #include <asm/setup.h>
+#include <asm/pgtable.h>
 
 /* Cache operations. */
 void (*flush_cache_all)(void);
@@ -193,11 +195,6 @@ void cpu_cache_init(void)
 
 		r4k_cache_init();
 	}
-	if (cpu_has_tx39_cache) {
-		extern void __weak tx39_cache_init(void);
-
-		tx39_cache_init();
-	}
 
 	if (cpu_has_octeon_cache) {
 		extern void __weak octeon_cache_init(void);
@@ -206,12 +203,4 @@ void cpu_cache_init(void)
 	}
 
 	setup_protection_map();
-}
-
-int __weak __uncached_access(struct file *file, unsigned long addr)
-{
-	if (file->f_flags & O_DSYNC)
-		return 1;
-
-	return addr >= __pa(high_memory);
 }

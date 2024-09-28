@@ -26,6 +26,11 @@ static const struct property_entry lid_device_props_l17[] = {
 	{},
 };
 
+static const struct property_entry lid_device_props_l4B[] = {
+	PROPERTY_ENTRY_U32("gpe", 0x4B),
+	{},
+};
+
 static const struct property_entry lid_device_props_l4D[] = {
 	PROPERTY_ENTRY_U32("gpe", 0x4D),
 	{},
@@ -95,6 +100,14 @@ static const struct dmi_system_id dmi_lid_device_table[] = {
 		.driver_data = (void *)lid_device_props_l4D,
 	},
 	{
+		.ident = "Surface Pro 8",
+		.matches = {
+			DMI_EXACT_MATCH(DMI_SYS_VENDOR, "Microsoft Corporation"),
+			DMI_EXACT_MATCH(DMI_PRODUCT_NAME, "Surface Pro 8"),
+		},
+		.driver_data = (void *)lid_device_props_l4B,
+	},
+	{
 		.ident = "Surface Book 1",
 		.matches = {
 			DMI_EXACT_MATCH(DMI_SYS_VENDOR, "Microsoft Corporation"),
@@ -158,6 +171,14 @@ static const struct dmi_system_id dmi_lid_device_table[] = {
 		},
 		.driver_data = (void *)lid_device_props_l4D,
 	},
+	{
+		.ident = "Surface Laptop Studio",
+		.matches = {
+			DMI_EXACT_MATCH(DMI_SYS_VENDOR, "Microsoft Corporation"),
+			DMI_EXACT_MATCH(DMI_PRODUCT_NAME, "Surface Laptop Studio"),
+		},
+		.driver_data = (void *)lid_device_props_l4B,
+	},
 	{ }
 };
 
@@ -181,12 +202,12 @@ static int surface_lid_enable_wakeup(struct device *dev, bool enable)
 	return 0;
 }
 
-static int surface_gpe_suspend(struct device *dev)
+static int __maybe_unused surface_gpe_suspend(struct device *dev)
 {
 	return surface_lid_enable_wakeup(dev, true);
 }
 
-static int surface_gpe_resume(struct device *dev)
+static int __maybe_unused surface_gpe_resume(struct device *dev)
 {
 	return surface_lid_enable_wakeup(dev, false);
 }

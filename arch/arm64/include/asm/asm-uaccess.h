@@ -3,10 +3,11 @@
 #define __ASM_ASM_UACCESS_H
 
 #include <asm/alternative-macros.h>
+#include <asm/asm-extable.h>
+#include <asm/assembler.h>
 #include <asm/kernel-pgtable.h>
 #include <asm/mmu.h>
 #include <asm/sysreg.h>
-#include <asm/assembler.h>
 
 /*
  * User access enabling/disabling macros.
@@ -15,10 +16,10 @@
 	.macro	__uaccess_ttbr0_disable, tmp1
 	mrs	\tmp1, ttbr1_el1			// swapper_pg_dir
 	bic	\tmp1, \tmp1, #TTBR_ASID_MASK
-	sub	\tmp1, \tmp1, #PAGE_SIZE		// reserved_pg_dir just before swapper_pg_dir
+	sub	\tmp1, \tmp1, #RESERVED_SWAPPER_OFFSET	// reserved_pg_dir
 	msr	ttbr0_el1, \tmp1			// set reserved TTBR0_EL1
 	isb
-	add	\tmp1, \tmp1, #PAGE_SIZE
+	add	\tmp1, \tmp1, #RESERVED_SWAPPER_OFFSET
 	msr	ttbr1_el1, \tmp1		// set reserved ASID
 	isb
 	.endm
@@ -57,6 +58,10 @@ alternative_else_nop_endif
 	.macro	uaccess_ttbr0_enable, tmp1, tmp2, tmp3
 	.endm
 #endif
+
+#define USER(l, x...)				\
+9999:	x;					\
+	_asm_extable	9999b, l
 
 /*
  * Generate the assembly for LDTR/STTR with exception table entries.

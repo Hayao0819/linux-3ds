@@ -149,6 +149,10 @@ struct console {
 	short	flags;
 	short	index;
 	int	cflag;
+	uint	ispeed;
+	uint	ospeed;
+	u64	seq;
+	unsigned long dropped;
 	void	*data;
 	struct	 console *next;
 };
@@ -186,11 +190,8 @@ extern int braille_register_console(struct console *, int index,
 extern int braille_unregister_console(struct console *);
 #ifdef CONFIG_TTY
 extern void console_sysfs_notify(void);
-extern void register_ttynull_console(void);
 #else
 static inline void console_sysfs_notify(void)
-{ }
-static inline void register_ttynull_console(void)
 { }
 #endif
 extern bool console_suspend_enabled;
@@ -219,12 +220,6 @@ extern atomic_t ignore_console_lock_warning;
 #define VESA_VSYNC_SUSPEND      1
 #define VESA_HSYNC_SUSPEND      2
 #define VESA_POWERDOWN          3
-
-#ifdef CONFIG_VGA_CONSOLE
-extern bool vgacon_text_force(void);
-#else
-static inline bool vgacon_text_force(void) { return false; }
-#endif
 
 extern void console_init(void);
 

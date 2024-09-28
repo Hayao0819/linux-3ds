@@ -535,7 +535,7 @@ static int am33xx_pm_probe(struct platform_device *pdev)
 
 	ret = am33xx_push_sram_idle();
 	if (ret)
-		goto err_free_sram;
+		goto err_unsetup_rtc;
 
 	am33xx_pm_set_ipc_ops();
 
@@ -555,11 +555,9 @@ static int am33xx_pm_probe(struct platform_device *pdev)
 #endif /* CONFIG_SUSPEND */
 
 	pm_runtime_enable(dev);
-	ret = pm_runtime_get_sync(dev);
-	if (ret < 0) {
-		pm_runtime_put_noidle(dev);
+	ret = pm_runtime_resume_and_get(dev);
+	if (ret < 0)
 		goto err_pm_runtime_disable;
-	}
 
 	ret = pm_ops->init(am33xx_do_sram_idle);
 	if (ret) {
@@ -575,6 +573,9 @@ err_pm_runtime_put:
 err_pm_runtime_disable:
 	pm_runtime_disable(dev);
 	wkup_m3_ipc_put(m3_ipc);
+err_unsetup_rtc:
+	iounmap(rtc_base_virt);
+	clk_put(rtc_fck);
 err_free_sram:
 	am33xx_pm_free_sram();
 	pm33xx_dev = NULL;

@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * KVM dirty ring implementation
  *
@@ -9,6 +9,7 @@
 #include <linux/vmalloc.h>
 #include <linux/kvm_dirty_ring.h>
 #include <trace/events/kvm.h>
+#include "kvm_mm.h"
 
 int __weak kvm_cpu_dirty_log_size(void)
 {
@@ -35,15 +36,6 @@ static bool kvm_dirty_ring_full(struct kvm_dirty_ring *ring)
 	return kvm_dirty_ring_used(ring) >= ring->size;
 }
 
-struct kvm_dirty_ring *kvm_dirty_ring_get(struct kvm *kvm)
-{
-	struct kvm_vcpu *vcpu = kvm_get_running_vcpu();
-
-	WARN_ON_ONCE(vcpu->kvm != kvm);
-
-	return &vcpu->dirty_ring;
-}
-
 static void kvm_reset_dirty_gfn(struct kvm *kvm, u32 slot, u64 offset, u64 mask)
 {
 	struct kvm_memory_slot *memslot;
@@ -60,17 +52,16 @@ static void kvm_reset_dirty_gfn(struct kvm *kvm, u32 slot, u64 offset, u64 mask)
 	if (!memslot || (offset + __fls(mask)) >= memslot->npages)
 		return;
 
-	spin_lock(&kvm->mmu_lock);
+	KVM_MMU_LOCK(kvm);
 	kvm_arch_mmu_enable_log_dirty_pt_masked(kvm, memslot, offset, mask);
-	spin_unlock(&kvm->mmu_lock);
+	KVM_MMU_UNLOCK(kvm);
 }
 
 int kvm_dirty_ring_alloc(struct kvm_dirty_ring *ring, int index, u32 size)
 {
-	ring->dirty_gfns = vmalloc(size);
+	ring->dirty_gfns = vzalloc(size);
 	if (!ring->dirty_gfns)
 		return -ENOMEM;
-	memset(ring->dirty_gfns, 0, size);
 
 	ring->size = size / sizeof(struct kvm_dirty_gfn);
 	ring->soft_limit = ring->size - kvm_dirty_ring_get_rsvd_entries();
@@ -89,11 +80,6 @@ static inline void kvm_dirty_gfn_set_invalid(struct kvm_dirty_gfn *gfn)
 static inline void kvm_dirty_gfn_set_dirtied(struct kvm_dirty_gfn *gfn)
 {
 	gfn->flags = KVM_DIRTY_GFN_F_DIRTY;
-}
-
-static inline bool kvm_dirty_gfn_invalid(struct kvm_dirty_gfn *gfn)
-{
-	return gfn->flags == 0;
 }
 
 static inline bool kvm_dirty_gfn_harvested(struct kvm_dirty_gfn *gfn)

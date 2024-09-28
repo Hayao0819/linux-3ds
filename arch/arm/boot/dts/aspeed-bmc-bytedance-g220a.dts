@@ -55,7 +55,7 @@
 
 	chosen {
 		stdout-path = &uart5;
-		bootargs = "console=ttyS4,115200 earlyprintk";
+		bootargs = "console=ttyS4,115200 earlycon";
 	};
 
 	memory@80000000 {
@@ -260,6 +260,13 @@
 		spi-max-frequency = <50000000>;
 #include "openbmc-flash-layout-64.dtsi"
 	};
+	flash@1 {
+		status = "okay";
+		label = "alt-bmc";
+		m25p,fast-read;
+		spi-max-frequency = <50000000>;
+#include "openbmc-flash-layout-64-alt.dtsi"
+	};
 };
 
 &spi1 {
@@ -276,6 +283,11 @@
 
 &adc {
 	status = "okay";
+};
+
+&wdt2 {
+	status = "okay";
+	aspeed,alt-boot;
 };
 
 &gpio {
@@ -446,7 +458,11 @@
 
 &i2c4 {
 	status = "okay";
-
+	ipmb0@10 {
+		compatible = "ipmb-dev";
+		reg = <(0x10 | I2C_OWN_SLAVE_ADDRESS)>;
+		i2c-protocol;
+	};
 };
 
 &i2c5 {
@@ -901,14 +917,14 @@
 &gpio {
 	pin_gpio_i3 {
 		gpio-hog;
-		gpios = <ASPEED_GPIO(I, 3) GPIO_ACTIVE_LOW>;
+		gpios = <ASPEED_GPIO(I, 3) GPIO_ACTIVE_HIGH>;
 		output-low;
 		line-name = "NCSI_BMC_R_SEL";
 	};
 
 	pin_gpio_b6 {
 		gpio-hog;
-		gpios = <ASPEED_GPIO(B, 6) GPIO_ACTIVE_LOW>;
+		gpios = <ASPEED_GPIO(B, 6) GPIO_ACTIVE_HIGH>;
 		output-low;
 		line-name = "EN_NCSI_SWITCH_N";
 	};

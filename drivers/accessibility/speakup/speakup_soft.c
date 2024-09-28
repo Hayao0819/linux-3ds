@@ -5,7 +5,7 @@
  *
  * Copyright (C) 2003  Kirk Reiser.
  *
- * this code is specificly written as a driver for the speakup screenreview
+ * this code is specifically written as a driver for the speakup screenreview
  * package and is not a general device driver.
  */
 
@@ -24,7 +24,7 @@
 #define CLEAR_SYNTH 0x18
 
 static int softsynth_probe(struct spk_synth *synth);
-static void softsynth_release(void);
+static void softsynth_release(struct spk_synth *synth);
 static int softsynth_is_alive(struct spk_synth *synth);
 static unsigned char get_index(struct spk_synth *synth);
 
@@ -153,18 +153,25 @@ static char *get_initstring(void)
 	static char buf[40];
 	char *cp;
 	struct var_t *var;
+	size_t len;
+	size_t n;
 
 	memset(buf, 0, sizeof(buf));
 	cp = buf;
+	len = sizeof(buf);
+
 	var = synth_soft.vars;
 	while (var->var_id != MAXVARS) {
 		if (var->var_id != CAPS_START && var->var_id != CAPS_STOP &&
-		    var->var_id != PAUSE && var->var_id != DIRECT)
-			cp = cp + sprintf(cp, var->u.n.synth_fmt,
-					  var->u.n.value);
+		    var->var_id != PAUSE && var->var_id != DIRECT) {
+			n = scnprintf(cp, len, var->u.n.synth_fmt,
+				      var->u.n.value);
+			cp = cp + n;
+			len = len - n;
+		}
 		var++;
 	}
-	cp = cp + sprintf(cp, "\n");
+	cp = cp + scnprintf(cp, len, "\n");
 	return buf;
 }
 
@@ -390,6 +397,7 @@ static int softsynth_probe(struct spk_synth *synth)
 	synthu_device.name = "softsynthu";
 	synthu_device.fops = &softsynthu_fops;
 	if (misc_register(&synthu_device)) {
+		misc_deregister(&synth_device);
 		pr_warn("Couldn't initialize miscdevice /dev/softsynthu.\n");
 		return -ENODEV;
 	}
@@ -402,7 +410,7 @@ static int softsynth_probe(struct spk_synth *synth)
 	return 0;
 }
 
-static void softsynth_release(void)
+static void softsynth_release(struct spk_synth *synth)
 {
 	misc_deregister(&synth_device);
 	misc_deregister(&synthu_device);

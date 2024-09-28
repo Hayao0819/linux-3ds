@@ -360,7 +360,7 @@ fcloop_h2t_ls_req(struct nvme_fc_local_port *localport,
 		spin_lock(&rport->lock);
 		list_add_tail(&rport->ls_list, &tls_req->ls_list);
 		spin_unlock(&rport->lock);
-		schedule_work(&rport->ls_work);
+		queue_work(nvmet_wq, &rport->ls_work);
 		return ret;
 	}
 
@@ -393,7 +393,7 @@ fcloop_h2t_xmt_ls_rsp(struct nvmet_fc_target_port *targetport,
 		spin_lock(&rport->lock);
 		list_add_tail(&rport->ls_list, &tls_req->ls_list);
 		spin_unlock(&rport->lock);
-		schedule_work(&rport->ls_work);
+		queue_work(nvmet_wq, &rport->ls_work);
 	}
 
 	return 0;
@@ -448,7 +448,7 @@ fcloop_t2h_ls_req(struct nvmet_fc_target_port *targetport, void *hosthandle,
 		spin_lock(&tport->lock);
 		list_add_tail(&tport->ls_list, &tls_req->ls_list);
 		spin_unlock(&tport->lock);
-		schedule_work(&tport->ls_work);
+		queue_work(nvmet_wq, &tport->ls_work);
 		return ret;
 	}
 
@@ -480,7 +480,7 @@ fcloop_t2h_xmt_ls_rsp(struct nvme_fc_local_port *localport,
 		spin_lock(&tport->lock);
 		list_add_tail(&tport->ls_list, &tls_req->ls_list);
 		spin_unlock(&tport->lock);
-		schedule_work(&tport->ls_work);
+		queue_work(nvmet_wq, &tport->ls_work);
 	}
 
 	return 0;
@@ -520,7 +520,7 @@ fcloop_tgt_discovery_evt(struct nvmet_fc_target_port *tgtport)
 	tgt_rscn->tport = tgtport->private;
 	INIT_WORK(&tgt_rscn->work, fcloop_tgt_rscn_work);
 
-	schedule_work(&tgt_rscn->work);
+	queue_work(nvmet_wq, &tgt_rscn->work);
 }
 
 static void
@@ -739,7 +739,7 @@ fcloop_fcp_req(struct nvme_fc_local_port *localport,
 	INIT_WORK(&tfcp_req->tio_done_work, fcloop_tgt_fcprqst_done_work);
 	kref_init(&tfcp_req->ref);
 
-	schedule_work(&tfcp_req->fcp_rcv_work);
+	queue_work(nvmet_wq, &tfcp_req->fcp_rcv_work);
 
 	return 0;
 }
@@ -921,7 +921,7 @@ fcloop_fcp_req_release(struct nvmet_fc_target_port *tgtport,
 {
 	struct fcloop_fcpreq *tfcp_req = tgt_fcp_req_to_fcpreq(tgt_fcpreq);
 
-	schedule_work(&tfcp_req->tio_done_work);
+	queue_work(nvmet_wq, &tfcp_req->tio_done_work);
 }
 
 static void
@@ -976,7 +976,7 @@ fcloop_fcp_abort(struct nvme_fc_local_port *localport,
 
 	if (abortio)
 		/* leave the reference while the work item is scheduled */
-		WARN_ON(!schedule_work(&tfcp_req->abort_rcv_work));
+		WARN_ON(!queue_work(nvmet_wq, &tfcp_req->abort_rcv_work));
 	else  {
 		/*
 		 * as the io has already had the done callback made,
@@ -1501,7 +1501,8 @@ static ssize_t
 fcloop_set_cmd_drop(struct device *dev, struct device_attribute *attr,
 		const char *buf, size_t count)
 {
-	int opcode, starting, amount;
+	unsigned int opcode;
+	int starting, amount;
 
 	if (sscanf(buf, "%x:%d:%d", &opcode, &starting, &amount) != 3)
 		return -EBADRQC;
@@ -1544,7 +1545,7 @@ static struct attribute *fcloop_dev_attrs[] = {
 	NULL
 };
 
-static struct attribute_group fclopp_dev_attrs_group = {
+static const struct attribute_group fclopp_dev_attrs_group = {
 	.attrs		= fcloop_dev_attrs,
 };
 
@@ -1588,8 +1589,8 @@ out_destroy_class:
 
 static void __exit fcloop_exit(void)
 {
-	struct fcloop_lport *lport;
-	struct fcloop_nport *nport;
+	struct fcloop_lport *lport = NULL;
+	struct fcloop_nport *nport = NULL;
 	struct fcloop_tport *tport;
 	struct fcloop_rport *rport;
 	unsigned long flags;

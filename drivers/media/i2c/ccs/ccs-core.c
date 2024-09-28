@@ -17,7 +17,6 @@
 #include <linux/delay.h>
 #include <linux/device.h>
 #include <linux/firmware.h>
-#include <linux/gpio.h>
 #include <linux/gpio/consumer.h>
 #include <linux/module.h>
 #include <linux/pm_runtime.h>
@@ -28,6 +27,7 @@
 #include <linux/v4l2-mediabus.h>
 #include <media/v4l2-fwnode.h>
 #include <media/v4l2-device.h>
+#include <uapi/linux/ccs.h>
 
 #include "ccs.h"
 
@@ -121,7 +121,7 @@ void ccs_replace_limit(struct ccs_sensor *sensor,
 
 	linfo = &ccs_limits[ccs_limit_offsets[limit].info];
 
-	dev_dbg(&client->dev, "quirk: 0x%8.8x \"%s\" %u = %d, 0x%x\n",
+	dev_dbg(&client->dev, "quirk: 0x%8.8x \"%s\" %u = %u, 0x%x\n",
 		linfo->reg, linfo->name, offset, val, val);
 
 	ccs_assign_limit(ptr, ccs_reg_width(linfo->reg), val);
@@ -288,7 +288,7 @@ static int ccs_read_frame_fmt(struct ccs_sensor *sensor)
 				CCS_FRAME_FORMAT_DESCRIPTOR_4_PIXELS_MASK;
 		} else {
 			dev_dbg(&client->dev,
-				"invalid frame format model type %d\n",
+				"invalid frame format model type %u\n",
 				fmt_model_type);
 			return -EINVAL;
 		}
@@ -320,7 +320,7 @@ static int ccs_read_frame_fmt(struct ccs_sensor *sensor)
 		}
 
 		dev_dbg(&client->dev,
-			"%s pixels: %d %s (pixelcode %u)\n",
+			"%s pixels: %u %s (pixelcode %u)\n",
 			what, pixels, which, pixelcode);
 
 		if (i < ncol_desc) {
@@ -353,9 +353,9 @@ static int ccs_read_frame_fmt(struct ccs_sensor *sensor)
 		sensor->image_start = sensor->embedded_end;
 	}
 
-	dev_dbg(&client->dev, "embedded data from lines %d to %d\n",
+	dev_dbg(&client->dev, "embedded data from lines %u to %u\n",
 		sensor->embedded_start, sensor->embedded_end);
-	dev_dbg(&client->dev, "image data starts at line %d\n",
+	dev_dbg(&client->dev, "image data starts at line %u\n",
 		sensor->image_start);
 
 	return 0;
@@ -382,15 +382,22 @@ static int ccs_pll_configure(struct ccs_sensor *sensor)
 	if (rval < 0)
 		return rval;
 
-	/* Lane op clock ratio does not apply here. */
-	rval = ccs_write(sensor, REQUESTED_LINK_RATE,
-			 DIV_ROUND_UP(pll->op_bk.sys_clk_freq_hz,
-				      1000000 / 256 / 256) *
-			 (pll->flags & CCS_PLL_FLAG_LANE_SPEED_MODEL ?
-			  sensor->pll.csi2.lanes : 1) <<
-			 (pll->flags & CCS_PLL_FLAG_OP_SYS_DDR ? 1 : 0));
-	if (rval < 0 || sensor->pll.flags & CCS_PLL_FLAG_NO_OP_CLOCKS)
-		return rval;
+	if (!(CCS_LIM(sensor, PHY_CTRL_CAPABILITY) &
+	      CCS_PHY_CTRL_CAPABILITY_AUTO_PHY_CTL)) {
+		/* Lane op clock ratio does not apply here. */
+		rval = ccs_write(sensor, REQUESTED_LINK_RATE,
+				 DIV_ROUND_UP(pll->op_bk.sys_clk_freq_hz,
+					      1000000 / 256 / 256) *
+				 (pll->flags & CCS_PLL_FLAG_LANE_SPEED_MODEL ?
+				  sensor->pll.csi2.lanes : 1) <<
+				 (pll->flags & CCS_PLL_FLAG_OP_SYS_DDR ?
+				  1 : 0));
+		if (rval < 0)
+			return rval;
+	}
+
+	if (sensor->pll.flags & CCS_PLL_FLAG_NO_OP_CLOCKS)
+		return 0;
 
 	rval = ccs_write(sensor, OP_PIX_CLK_DIV, pll->op_bk.pix_clk_div);
 	if (rval < 0)
@@ -564,7 +571,7 @@ static u32 ccs_pixel_order(struct ccs_sensor *sensor)
 
 	flip ^= sensor->hvflip_inv_mask;
 
-	dev_dbg(&client->dev, "flip %d\n", flip);
+	dev_dbg(&client->dev, "flip %u\n", flip);
 	return sensor->default_pixel_order ^ flip;
 }
 
@@ -671,6 +678,49 @@ static int ccs_set_ctrl(struct v4l2_ctrl *ctrl)
 		rval = ccs_write(sensor, ANALOG_GAIN_CODE_GLOBAL, ctrl->val);
 
 		break;
+
+	case V4L2_CID_CCS_ANALOGUE_LINEAR_GAIN:
+		rval = ccs_write(sensor, ANALOG_LINEAR_GAIN_GLOBAL, ctrl->val);
+
+		break;
+
+	case V4L2_CID_CCS_ANALOGUE_EXPONENTIAL_GAIN:
+		rval = ccs_write(sensor, ANALOG_EXPONENTIAL_GAIN_GLOBAL,
+				 ctrl->val);
+
+		break;
+
+	case V4L2_CID_DIGITAL_GAIN:
+		if (CCS_LIM(sensor, DIGITAL_GAIN_CAPABILITY) ==
+		    CCS_DIGITAL_GAIN_CAPABILITY_GLOBAL) {
+			rval = ccs_write(sensor, DIGITAL_GAIN_GLOBAL,
+					 ctrl->val);
+			break;
+		}
+
+		rval = ccs_write_addr(sensor,
+				      SMIAPP_REG_U16_DIGITAL_GAIN_GREENR,
+				      ctrl->val);
+		if (rval)
+			break;
+
+		rval = ccs_write_addr(sensor,
+				      SMIAPP_REG_U16_DIGITAL_GAIN_RED,
+				      ctrl->val);
+		if (rval)
+			break;
+
+		rval = ccs_write_addr(sensor,
+				      SMIAPP_REG_U16_DIGITAL_GAIN_BLUE,
+				      ctrl->val);
+		if (rval)
+			break;
+
+		rval = ccs_write_addr(sensor,
+				      SMIAPP_REG_U16_DIGITAL_GAIN_GREENB,
+				      ctrl->val);
+
+		break;
 	case V4L2_CID_EXPOSURE:
 		rval = ccs_write(sensor, COARSE_INTEGRATION_TIME, ctrl->val);
 
@@ -713,6 +763,19 @@ static int ccs_set_ctrl(struct v4l2_ctrl *ctrl)
 		rval = ccs_write(sensor, TEST_DATA_GREENB, ctrl->val);
 
 		break;
+	case V4L2_CID_CCS_SHADING_CORRECTION:
+		rval = ccs_write(sensor, SHADING_CORRECTION_EN,
+				 ctrl->val ? CCS_SHADING_CORRECTION_EN_ENABLE :
+				 0);
+
+		if (!rval && sensor->luminance_level)
+			v4l2_ctrl_activate(sensor->luminance_level, ctrl->val);
+
+		break;
+	case V4L2_CID_CCS_LUMINANCE_CORRECTION_LEVEL:
+		rval = ccs_write(sensor, LUMINANCE_CORRECTION_LEVEL, ctrl->val);
+
+		break;
 	case V4L2_CID_PIXEL_RATE:
 		/* For v4l2_ctrl_s_ctrl_int64() used internally. */
 		rval = 0;
@@ -739,19 +802,144 @@ static int ccs_init_controls(struct ccs_sensor *sensor)
 	struct i2c_client *client = v4l2_get_subdevdata(&sensor->src->sd);
 	int rval;
 
-	rval = v4l2_ctrl_handler_init(&sensor->pixel_array->ctrl_handler, 12);
+	rval = v4l2_ctrl_handler_init(&sensor->pixel_array->ctrl_handler, 17);
 	if (rval)
 		return rval;
 
 	sensor->pixel_array->ctrl_handler.lock = &sensor->mutex;
 
-	sensor->analog_gain = v4l2_ctrl_new_std(
-		&sensor->pixel_array->ctrl_handler, &ccs_ctrl_ops,
-		V4L2_CID_ANALOGUE_GAIN,
-		CCS_LIM(sensor, ANALOG_GAIN_CODE_MIN),
-		CCS_LIM(sensor, ANALOG_GAIN_CODE_MAX),
-		max(CCS_LIM(sensor, ANALOG_GAIN_CODE_STEP), 1U),
-		CCS_LIM(sensor, ANALOG_GAIN_CODE_MIN));
+	switch (CCS_LIM(sensor, ANALOG_GAIN_CAPABILITY)) {
+	case CCS_ANALOG_GAIN_CAPABILITY_GLOBAL: {
+		struct {
+			const char *name;
+			u32 id;
+			s32 value;
+		} const gain_ctrls[] = {
+			{ "Analogue Gain m0", V4L2_CID_CCS_ANALOGUE_GAIN_M0,
+			  CCS_LIM(sensor, ANALOG_GAIN_M0), },
+			{ "Analogue Gain c0", V4L2_CID_CCS_ANALOGUE_GAIN_C0,
+			  CCS_LIM(sensor, ANALOG_GAIN_C0), },
+			{ "Analogue Gain m1", V4L2_CID_CCS_ANALOGUE_GAIN_M1,
+			  CCS_LIM(sensor, ANALOG_GAIN_M1), },
+			{ "Analogue Gain c1", V4L2_CID_CCS_ANALOGUE_GAIN_C1,
+			  CCS_LIM(sensor, ANALOG_GAIN_C1), },
+		};
+		struct v4l2_ctrl_config ctrl_cfg = {
+			.type = V4L2_CTRL_TYPE_INTEGER,
+			.ops = &ccs_ctrl_ops,
+			.flags = V4L2_CTRL_FLAG_READ_ONLY,
+			.step = 1,
+		};
+		unsigned int i;
+
+		for (i = 0; i < ARRAY_SIZE(gain_ctrls); i++) {
+			ctrl_cfg.name = gain_ctrls[i].name;
+			ctrl_cfg.id = gain_ctrls[i].id;
+			ctrl_cfg.min = ctrl_cfg.max = ctrl_cfg.def =
+				gain_ctrls[i].value;
+
+			v4l2_ctrl_new_custom(&sensor->pixel_array->ctrl_handler,
+					     &ctrl_cfg, NULL);
+		}
+
+		v4l2_ctrl_new_std(&sensor->pixel_array->ctrl_handler,
+				  &ccs_ctrl_ops, V4L2_CID_ANALOGUE_GAIN,
+				  CCS_LIM(sensor, ANALOG_GAIN_CODE_MIN),
+				  CCS_LIM(sensor, ANALOG_GAIN_CODE_MAX),
+				  max(CCS_LIM(sensor, ANALOG_GAIN_CODE_STEP),
+				      1U),
+				  CCS_LIM(sensor, ANALOG_GAIN_CODE_MIN));
+	}
+		break;
+
+	case CCS_ANALOG_GAIN_CAPABILITY_ALTERNATE_GLOBAL: {
+		struct {
+			const char *name;
+			u32 id;
+			u16 min, max, step;
+		} const gain_ctrls[] = {
+			{
+				"Analogue Linear Gain",
+				V4L2_CID_CCS_ANALOGUE_LINEAR_GAIN,
+				CCS_LIM(sensor, ANALOG_LINEAR_GAIN_MIN),
+				CCS_LIM(sensor, ANALOG_LINEAR_GAIN_MAX),
+				max(CCS_LIM(sensor,
+					    ANALOG_LINEAR_GAIN_STEP_SIZE),
+				    1U),
+			},
+			{
+				"Analogue Exponential Gain",
+				V4L2_CID_CCS_ANALOGUE_EXPONENTIAL_GAIN,
+				CCS_LIM(sensor, ANALOG_EXPONENTIAL_GAIN_MIN),
+				CCS_LIM(sensor, ANALOG_EXPONENTIAL_GAIN_MAX),
+				max(CCS_LIM(sensor,
+					    ANALOG_EXPONENTIAL_GAIN_STEP_SIZE),
+				    1U),
+			},
+		};
+		struct v4l2_ctrl_config ctrl_cfg = {
+			.type = V4L2_CTRL_TYPE_INTEGER,
+			.ops = &ccs_ctrl_ops,
+		};
+		unsigned int i;
+
+		for (i = 0; i < ARRAY_SIZE(gain_ctrls); i++) {
+			ctrl_cfg.name = gain_ctrls[i].name;
+			ctrl_cfg.min = ctrl_cfg.def = gain_ctrls[i].min;
+			ctrl_cfg.max = gain_ctrls[i].max;
+			ctrl_cfg.step = gain_ctrls[i].step;
+			ctrl_cfg.id = gain_ctrls[i].id;
+
+			v4l2_ctrl_new_custom(&sensor->pixel_array->ctrl_handler,
+					     &ctrl_cfg, NULL);
+		}
+	}
+	}
+
+	if (CCS_LIM(sensor, SHADING_CORRECTION_CAPABILITY) &
+	    (CCS_SHADING_CORRECTION_CAPABILITY_COLOR_SHADING |
+	     CCS_SHADING_CORRECTION_CAPABILITY_LUMINANCE_CORRECTION)) {
+		const struct v4l2_ctrl_config ctrl_cfg = {
+			.name = "Shading Correction",
+			.type = V4L2_CTRL_TYPE_BOOLEAN,
+			.id = V4L2_CID_CCS_SHADING_CORRECTION,
+			.ops = &ccs_ctrl_ops,
+			.max = 1,
+			.step = 1,
+		};
+
+		v4l2_ctrl_new_custom(&sensor->pixel_array->ctrl_handler,
+				     &ctrl_cfg, NULL);
+	}
+
+	if (CCS_LIM(sensor, SHADING_CORRECTION_CAPABILITY) &
+	    CCS_SHADING_CORRECTION_CAPABILITY_LUMINANCE_CORRECTION) {
+		const struct v4l2_ctrl_config ctrl_cfg = {
+			.name = "Luminance Correction Level",
+			.type = V4L2_CTRL_TYPE_BOOLEAN,
+			.id = V4L2_CID_CCS_LUMINANCE_CORRECTION_LEVEL,
+			.ops = &ccs_ctrl_ops,
+			.max = 255,
+			.step = 1,
+			.def = 128,
+		};
+
+		sensor->luminance_level =
+			v4l2_ctrl_new_custom(&sensor->pixel_array->ctrl_handler,
+					     &ctrl_cfg, NULL);
+	}
+
+	if (CCS_LIM(sensor, DIGITAL_GAIN_CAPABILITY) ==
+	    CCS_DIGITAL_GAIN_CAPABILITY_GLOBAL ||
+	    CCS_LIM(sensor, DIGITAL_GAIN_CAPABILITY) ==
+	    SMIAPP_DIGITAL_GAIN_CAPABILITY_PER_CHANNEL)
+		v4l2_ctrl_new_std(&sensor->pixel_array->ctrl_handler,
+				  &ccs_ctrl_ops, V4L2_CID_DIGITAL_GAIN,
+				  CCS_LIM(sensor, DIGITAL_GAIN_MIN),
+				  CCS_LIM(sensor, DIGITAL_GAIN_MAX),
+				  max(CCS_LIM(sensor, DIGITAL_GAIN_STEP_SIZE),
+				      1U),
+				  0x100);
 
 	/* Exposure limits will be updated soon, use just something here. */
 	sensor->exposure = v4l2_ctrl_new_std(
@@ -868,18 +1056,18 @@ static int ccs_get_mbus_formats(struct ccs_sensor *sensor)
 
 	type = CCS_LIM(sensor, DATA_FORMAT_MODEL_TYPE);
 
-	dev_dbg(&client->dev, "data_format_model_type %d\n", type);
+	dev_dbg(&client->dev, "data_format_model_type %u\n", type);
 
 	rval = ccs_read(sensor, PIXEL_ORDER, &pixel_order);
 	if (rval)
 		return rval;
 
 	if (pixel_order >= ARRAY_SIZE(pixel_order_str)) {
-		dev_dbg(&client->dev, "bad pixel order %d\n", pixel_order);
+		dev_dbg(&client->dev, "bad pixel order %u\n", pixel_order);
 		return -EINVAL;
 	}
 
-	dev_dbg(&client->dev, "pixel order %d (%s)\n", pixel_order,
+	dev_dbg(&client->dev, "pixel order %u (%s)\n", pixel_order,
 		pixel_order_str[pixel_order]);
 
 	switch (type) {
@@ -917,7 +1105,7 @@ static int ccs_get_mbus_formats(struct ccs_sensor *sensor)
 			    (fmt & CCS_DATA_FORMAT_DESCRIPTOR_COMPRESSED_MASK))
 				continue;
 
-			dev_dbg(&client->dev, "jolly good! %d\n", j);
+			dev_dbg(&client->dev, "jolly good! %u\n", j);
 
 			sensor->default_mbus_frame_fmts |= 1 << j;
 		}
@@ -1001,7 +1189,7 @@ static void ccs_update_blanking(struct ccs_sensor *sensor)
 {
 	struct v4l2_ctrl *vblank = sensor->vblank;
 	struct v4l2_ctrl *hblank = sensor->hblank;
-	uint16_t min_fll, max_fll, min_llp, max_llp, min_lbp;
+	u16 min_fll, max_fll, min_llp, max_llp, min_lbp;
 	int min, max;
 
 	if (sensor->binning_vertical > 1 || sensor->binning_horizontal > 1) {
@@ -1322,6 +1510,28 @@ static int ccs_write_msr_regs(struct ccs_sensor *sensor)
 				   sensor->mdata.num_module_manufacturer_regs);
 }
 
+static int ccs_update_phy_ctrl(struct ccs_sensor *sensor)
+{
+	struct i2c_client *client = v4l2_get_subdevdata(&sensor->src->sd);
+	u8 val;
+
+	if (!sensor->ccs_limits)
+		return 0;
+
+	if (CCS_LIM(sensor, PHY_CTRL_CAPABILITY) &
+	    CCS_PHY_CTRL_CAPABILITY_AUTO_PHY_CTL) {
+		val = CCS_PHY_CTRL_AUTO;
+	} else if (CCS_LIM(sensor, PHY_CTRL_CAPABILITY) &
+		   CCS_PHY_CTRL_CAPABILITY_UI_PHY_CTL) {
+		val = CCS_PHY_CTRL_UI;
+	} else {
+		dev_err(&client->dev, "manual PHY control not supported\n");
+		return -EINVAL;
+	}
+
+	return ccs_write(sensor, PHY_CTRL, val);
+}
+
 static int ccs_power_on(struct device *dev)
 {
 	struct v4l2_subdev *subdev = dev_get_drvdata(dev);
@@ -1333,7 +1543,6 @@ static int ccs_power_on(struct device *dev)
 	struct ccs_sensor *sensor =
 		container_of(ssd, struct ccs_sensor, ssds[0]);
 	const struct ccs_device *ccsdev = device_get_match_data(dev);
-	unsigned int sleep;
 	int rval;
 
 	rval = regulator_bulk_enable(ARRAY_SIZE(ccs_regulators),
@@ -1343,21 +1552,25 @@ static int ccs_power_on(struct device *dev)
 		return rval;
 	}
 
-	rval = clk_prepare_enable(sensor->ext_clk);
-	if (rval < 0) {
-		dev_dbg(dev, "failed to enable xclk\n");
-		goto out_xclk_fail;
+	if (sensor->reset || sensor->xshutdown || sensor->ext_clk) {
+		unsigned int sleep;
+
+		rval = clk_prepare_enable(sensor->ext_clk);
+		if (rval < 0) {
+			dev_dbg(dev, "failed to enable xclk\n");
+			goto out_xclk_fail;
+		}
+
+		gpiod_set_value(sensor->reset, 0);
+		gpiod_set_value(sensor->xshutdown, 1);
+
+		if (ccsdev->flags & CCS_DEVICE_FLAG_IS_SMIA)
+			sleep = SMIAPP_RESET_DELAY(sensor->hwcfg.ext_clk);
+		else
+			sleep = 5000;
+
+		usleep_range(sleep, sleep);
 	}
-
-	gpiod_set_value(sensor->reset, 0);
-	gpiod_set_value(sensor->xshutdown, 1);
-
-	if (ccsdev->flags & CCS_DEVICE_FLAG_IS_SMIA)
-		sleep = SMIAPP_RESET_DELAY(sensor->hwcfg.ext_clk);
-	else
-		sleep = 5000;
-
-	usleep_range(sleep, sleep);
 
 	/*
 	 * Failures to respond to the address change command have been noticed.
@@ -1370,18 +1583,30 @@ static int ccs_power_on(struct device *dev)
 	 * is found.
 	 */
 
-	if (sensor->hwcfg.i2c_addr_alt) {
-		rval = ccs_change_cci_addr(sensor);
-		if (rval) {
-			dev_err(dev, "cci address change error\n");
+	if (!sensor->reset && !sensor->xshutdown) {
+		u8 retry = 100;
+		u32 reset;
+
+		rval = ccs_write(sensor, SOFTWARE_RESET, CCS_SOFTWARE_RESET_ON);
+		if (rval < 0) {
+			dev_err(dev, "software reset failed\n");
 			goto out_cci_addr_fail;
 		}
-	}
 
-	rval = ccs_write(sensor, SOFTWARE_RESET, CCS_SOFTWARE_RESET_ON);
-	if (rval < 0) {
-		dev_err(dev, "software reset failed\n");
-		goto out_cci_addr_fail;
+		do {
+			rval = ccs_read(sensor, SOFTWARE_RESET, &reset);
+			reset = !rval && reset == CCS_SOFTWARE_RESET_OFF;
+			if (reset)
+				break;
+
+			usleep_range(1000, 2000);
+		} while (--retry);
+
+		if (!reset) {
+			dev_err(dev, "software reset failed\n");
+			rval = -EIO;
+			goto out_cci_addr_fail;
+		}
 	}
 
 	if (sensor->hwcfg.i2c_addr_alt) {
@@ -1426,8 +1651,7 @@ static int ccs_power_on(struct device *dev)
 		goto out_cci_addr_fail;
 	}
 
-	/* DPHY control done by sensor based on requested link rate */
-	rval = ccs_write(sensor, PHY_CTRL, CCS_PHY_CTRL_UI);
+	rval = ccs_update_phy_ctrl(sensor);
 	if (rval < 0)
 		goto out_cci_addr_fail;
 
@@ -1658,21 +1882,33 @@ static int ccs_pm_get_init(struct ccs_sensor *sensor)
 	struct i2c_client *client = v4l2_get_subdevdata(&sensor->src->sd);
 	int rval;
 
+	/*
+	 * It can't use pm_runtime_resume_and_get() here, as the driver
+	 * relies at the returned value to detect if the device was already
+	 * active or not.
+	 */
 	rval = pm_runtime_get_sync(&client->dev);
-	if (rval < 0) {
-		pm_runtime_put_noidle(&client->dev);
+	if (rval < 0)
+		goto error;
 
-		return rval;
-	} else if (!rval) {
-		rval = v4l2_ctrl_handler_setup(&sensor->pixel_array->
-					       ctrl_handler);
-		if (rval)
-			return rval;
+	/* Device was already active, so don't set controls */
+	if (rval == 1)
+		return 0;
 
-		return v4l2_ctrl_handler_setup(&sensor->src->ctrl_handler);
-	}
+	/* Restore V4L2 controls to the previously suspended device */
+	rval = v4l2_ctrl_handler_setup(&sensor->pixel_array->ctrl_handler);
+	if (rval)
+		goto error;
 
+	rval = v4l2_ctrl_handler_setup(&sensor->src->ctrl_handler);
+	if (rval)
+		goto error;
+
+	/* Keep PM runtime usage_count incremented on success */
 	return 0;
+error:
+	pm_runtime_put(&client->dev);
+	return rval;
 }
 
 static int ccs_set_stream(struct v4l2_subdev *subdev, int enable)
@@ -1709,8 +1945,53 @@ static int ccs_set_stream(struct v4l2_subdev *subdev, int enable)
 	return rval;
 }
 
+static int ccs_pre_streamon(struct v4l2_subdev *subdev, u32 flags)
+{
+	struct ccs_sensor *sensor = to_ccs_sensor(subdev);
+	struct i2c_client *client = v4l2_get_subdevdata(&sensor->src->sd);
+	int rval;
+
+	if (flags & V4L2_SUBDEV_PRE_STREAMON_FL_MANUAL_LP) {
+		switch (sensor->hwcfg.csi_signalling_mode) {
+		case CCS_CSI_SIGNALING_MODE_CSI_2_DPHY:
+			if (!(CCS_LIM(sensor, PHY_CTRL_CAPABILITY_2) &
+			      CCS_PHY_CTRL_CAPABILITY_2_MANUAL_LP_DPHY))
+				return -EACCES;
+			break;
+		case CCS_CSI_SIGNALING_MODE_CSI_2_CPHY:
+			if (!(CCS_LIM(sensor, PHY_CTRL_CAPABILITY_2) &
+			      CCS_PHY_CTRL_CAPABILITY_2_MANUAL_LP_CPHY))
+				return -EACCES;
+			break;
+		default:
+			return -EACCES;
+		}
+	}
+
+	rval = ccs_pm_get_init(sensor);
+	if (rval)
+		return rval;
+
+	if (flags & V4L2_SUBDEV_PRE_STREAMON_FL_MANUAL_LP) {
+		rval = ccs_write(sensor, MANUAL_LP_CTRL,
+				 CCS_MANUAL_LP_CTRL_ENABLE);
+		if (rval)
+			pm_runtime_put(&client->dev);
+	}
+
+	return rval;
+}
+
+static int ccs_post_streamoff(struct v4l2_subdev *subdev)
+{
+	struct ccs_sensor *sensor = to_ccs_sensor(subdev);
+	struct i2c_client *client = v4l2_get_subdevdata(&sensor->src->sd);
+
+	return pm_runtime_put(&client->dev);
+}
+
 static int ccs_enum_mbus_code(struct v4l2_subdev *subdev,
-			      struct v4l2_subdev_pad_config *cfg,
+			      struct v4l2_subdev_state *sd_state,
 			      struct v4l2_subdev_mbus_code_enum *code)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(subdev);
@@ -1721,7 +2002,7 @@ static int ccs_enum_mbus_code(struct v4l2_subdev *subdev,
 
 	mutex_lock(&sensor->mutex);
 
-	dev_err(&client->dev, "subdev %s, pad %d, index %d\n",
+	dev_err(&client->dev, "subdev %s, pad %u, index %u\n",
 		subdev->name, code->pad, code->index);
 
 	if (subdev != &sensor->src->sd || code->pad != CCS_PAD_SRC) {
@@ -1739,7 +2020,7 @@ static int ccs_enum_mbus_code(struct v4l2_subdev *subdev,
 
 		if (idx == code->index) {
 			code->code = ccs_csi_data_formats[i].code;
-			dev_err(&client->dev, "found index %d, i %d, code %x\n",
+			dev_err(&client->dev, "found index %u, i %u, code %x\n",
 				code->index, i, code->code);
 			rval = 0;
 			break;
@@ -1763,13 +2044,13 @@ static u32 __ccs_get_mbus_code(struct v4l2_subdev *subdev, unsigned int pad)
 }
 
 static int __ccs_get_format(struct v4l2_subdev *subdev,
-			    struct v4l2_subdev_pad_config *cfg,
+			    struct v4l2_subdev_state *sd_state,
 			    struct v4l2_subdev_format *fmt)
 {
 	struct ccs_subdev *ssd = to_ccs_subdev(subdev);
 
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
-		fmt->format = *v4l2_subdev_get_try_format(subdev, cfg,
+		fmt->format = *v4l2_subdev_get_try_format(subdev, sd_state,
 							  fmt->pad);
 	} else {
 		struct v4l2_rect *r;
@@ -1789,21 +2070,21 @@ static int __ccs_get_format(struct v4l2_subdev *subdev,
 }
 
 static int ccs_get_format(struct v4l2_subdev *subdev,
-			  struct v4l2_subdev_pad_config *cfg,
+			  struct v4l2_subdev_state *sd_state,
 			  struct v4l2_subdev_format *fmt)
 {
 	struct ccs_sensor *sensor = to_ccs_sensor(subdev);
 	int rval;
 
 	mutex_lock(&sensor->mutex);
-	rval = __ccs_get_format(subdev, cfg, fmt);
+	rval = __ccs_get_format(subdev, sd_state, fmt);
 	mutex_unlock(&sensor->mutex);
 
 	return rval;
 }
 
 static void ccs_get_crop_compose(struct v4l2_subdev *subdev,
-				 struct v4l2_subdev_pad_config *cfg,
+				 struct v4l2_subdev_state *sd_state,
 				 struct v4l2_rect **crops,
 				 struct v4l2_rect **comps, int which)
 {
@@ -1820,24 +2101,25 @@ static void ccs_get_crop_compose(struct v4l2_subdev *subdev,
 		if (crops) {
 			for (i = 0; i < subdev->entity.num_pads; i++)
 				crops[i] = v4l2_subdev_get_try_crop(subdev,
-								    cfg, i);
+								    sd_state,
+								    i);
 		}
 		if (comps)
-			*comps = v4l2_subdev_get_try_compose(subdev, cfg,
+			*comps = v4l2_subdev_get_try_compose(subdev, sd_state,
 							     CCS_PAD_SINK);
 	}
 }
 
 /* Changes require propagation only on sink pad. */
 static void ccs_propagate(struct v4l2_subdev *subdev,
-			  struct v4l2_subdev_pad_config *cfg, int which,
+			  struct v4l2_subdev_state *sd_state, int which,
 			  int target)
 {
 	struct ccs_sensor *sensor = to_ccs_sensor(subdev);
 	struct ccs_subdev *ssd = to_ccs_subdev(subdev);
 	struct v4l2_rect *comp, *crops[CCS_PADS];
 
-	ccs_get_crop_compose(subdev, cfg, crops, &comp, which);
+	ccs_get_crop_compose(subdev, sd_state, crops, &comp, which);
 
 	switch (target) {
 	case V4L2_SEL_TGT_CROP:
@@ -1877,7 +2159,7 @@ static const struct ccs_csi_data_format
 }
 
 static int ccs_set_format_source(struct v4l2_subdev *subdev,
-				 struct v4l2_subdev_pad_config *cfg,
+				 struct v4l2_subdev_state *sd_state,
 				 struct v4l2_subdev_format *fmt)
 {
 	struct ccs_sensor *sensor = to_ccs_sensor(subdev);
@@ -1888,7 +2170,7 @@ static int ccs_set_format_source(struct v4l2_subdev *subdev,
 	unsigned int i;
 	int rval;
 
-	rval = __ccs_get_format(subdev, cfg, fmt);
+	rval = __ccs_get_format(subdev, sd_state, fmt);
 	if (rval)
 		return rval;
 
@@ -1930,7 +2212,7 @@ static int ccs_set_format_source(struct v4l2_subdev *subdev,
 }
 
 static int ccs_set_format(struct v4l2_subdev *subdev,
-			  struct v4l2_subdev_pad_config *cfg,
+			  struct v4l2_subdev_state *sd_state,
 			  struct v4l2_subdev_format *fmt)
 {
 	struct ccs_sensor *sensor = to_ccs_sensor(subdev);
@@ -1942,7 +2224,7 @@ static int ccs_set_format(struct v4l2_subdev *subdev,
 	if (fmt->pad == ssd->source_pad) {
 		int rval;
 
-		rval = ccs_set_format_source(subdev, cfg, fmt);
+		rval = ccs_set_format_source(subdev, sd_state, fmt);
 
 		mutex_unlock(&sensor->mutex);
 
@@ -1964,7 +2246,7 @@ static int ccs_set_format(struct v4l2_subdev *subdev,
 		      CCS_LIM(sensor, MIN_Y_OUTPUT_SIZE),
 		      CCS_LIM(sensor, MAX_Y_OUTPUT_SIZE));
 
-	ccs_get_crop_compose(subdev, cfg, crops, NULL, fmt->which);
+	ccs_get_crop_compose(subdev, sd_state, crops, NULL, fmt->which);
 
 	crops[ssd->sink_pad]->left = 0;
 	crops[ssd->sink_pad]->top = 0;
@@ -1972,7 +2254,7 @@ static int ccs_set_format(struct v4l2_subdev *subdev,
 	crops[ssd->sink_pad]->height = fmt->format.height;
 	if (fmt->which == V4L2_SUBDEV_FORMAT_ACTIVE)
 		ssd->sink_fmt = *crops[ssd->sink_pad];
-	ccs_propagate(subdev, cfg, fmt->which, V4L2_SEL_TGT_CROP);
+	ccs_propagate(subdev, sd_state, fmt->which, V4L2_SEL_TGT_CROP);
 
 	mutex_unlock(&sensor->mutex);
 
@@ -2024,7 +2306,7 @@ static int scaling_goodness(struct v4l2_subdev *subdev, int w, int ask_w,
 }
 
 static void ccs_set_compose_binner(struct v4l2_subdev *subdev,
-				   struct v4l2_subdev_pad_config *cfg,
+				   struct v4l2_subdev_state *sd_state,
 				   struct v4l2_subdev_selection *sel,
 				   struct v4l2_rect **crops,
 				   struct v4l2_rect *comp)
@@ -2072,7 +2354,7 @@ static void ccs_set_compose_binner(struct v4l2_subdev *subdev,
  * result.
  */
 static void ccs_set_compose_scaler(struct v4l2_subdev *subdev,
-				   struct v4l2_subdev_pad_config *cfg,
+				   struct v4l2_subdev_state *sd_state,
 				   struct v4l2_subdev_selection *sel,
 				   struct v4l2_rect **crops,
 				   struct v4l2_rect *comp)
@@ -2107,7 +2389,7 @@ static void ccs_set_compose_scaler(struct v4l2_subdev *subdev,
 	max_m = clamp(max_m, CCS_LIM(sensor, SCALER_M_MIN),
 		      CCS_LIM(sensor, SCALER_M_MAX));
 
-	dev_dbg(&client->dev, "scaling: a %d b %d max_m %d\n", a, b, max_m);
+	dev_dbg(&client->dev, "scaling: a %u b %u max_m %u\n", a, b, max_m);
 
 	min = min(max_m, min(a, b));
 	max = min(max_m, max(a, b));
@@ -2137,7 +2419,7 @@ static void ccs_set_compose_scaler(struct v4l2_subdev *subdev,
 			sel->r.height,
 			sel->flags);
 
-		dev_dbg(&client->dev, "trying factor %d (%d)\n", try[i], i);
+		dev_dbg(&client->dev, "trying factor %u (%u)\n", try[i], i);
 
 		if (this > best) {
 			scale_m = try[i];
@@ -2187,25 +2469,25 @@ static void ccs_set_compose_scaler(struct v4l2_subdev *subdev,
 }
 /* We're only called on source pads. This function sets scaling. */
 static int ccs_set_compose(struct v4l2_subdev *subdev,
-			   struct v4l2_subdev_pad_config *cfg,
+			   struct v4l2_subdev_state *sd_state,
 			   struct v4l2_subdev_selection *sel)
 {
 	struct ccs_sensor *sensor = to_ccs_sensor(subdev);
 	struct ccs_subdev *ssd = to_ccs_subdev(subdev);
 	struct v4l2_rect *comp, *crops[CCS_PADS];
 
-	ccs_get_crop_compose(subdev, cfg, crops, &comp, sel->which);
+	ccs_get_crop_compose(subdev, sd_state, crops, &comp, sel->which);
 
 	sel->r.top = 0;
 	sel->r.left = 0;
 
 	if (ssd == sensor->binner)
-		ccs_set_compose_binner(subdev, cfg, sel, crops, comp);
+		ccs_set_compose_binner(subdev, sd_state, sel, crops, comp);
 	else
-		ccs_set_compose_scaler(subdev, cfg, sel, crops, comp);
+		ccs_set_compose_scaler(subdev, sd_state, sel, crops, comp);
 
 	*comp = sel->r;
-	ccs_propagate(subdev, cfg, sel->which, V4L2_SEL_TGT_COMPOSE);
+	ccs_propagate(subdev, sd_state, sel->which, V4L2_SEL_TGT_COMPOSE);
 
 	if (sel->which == V4L2_SUBDEV_FORMAT_ACTIVE)
 		return ccs_pll_blanking_update(sensor);
@@ -2252,7 +2534,7 @@ static int __ccs_sel_supported(struct v4l2_subdev *subdev,
 }
 
 static int ccs_set_crop(struct v4l2_subdev *subdev,
-			struct v4l2_subdev_pad_config *cfg,
+			struct v4l2_subdev_state *sd_state,
 			struct v4l2_subdev_selection *sel)
 {
 	struct ccs_sensor *sensor = to_ccs_sensor(subdev);
@@ -2260,7 +2542,7 @@ static int ccs_set_crop(struct v4l2_subdev *subdev,
 	struct v4l2_rect *src_size, *crops[CCS_PADS];
 	struct v4l2_rect _r;
 
-	ccs_get_crop_compose(subdev, cfg, crops, NULL, sel->which);
+	ccs_get_crop_compose(subdev, sd_state, crops, NULL, sel->which);
 
 	if (sel->which == V4L2_SUBDEV_FORMAT_ACTIVE) {
 		if (sel->pad == ssd->sink_pad)
@@ -2271,16 +2553,18 @@ static int ccs_set_crop(struct v4l2_subdev *subdev,
 		if (sel->pad == ssd->sink_pad) {
 			_r.left = 0;
 			_r.top = 0;
-			_r.width = v4l2_subdev_get_try_format(subdev, cfg,
+			_r.width = v4l2_subdev_get_try_format(subdev,
+							      sd_state,
 							      sel->pad)
 				->width;
-			_r.height = v4l2_subdev_get_try_format(subdev, cfg,
+			_r.height = v4l2_subdev_get_try_format(subdev,
+							       sd_state,
 							       sel->pad)
 				->height;
 			src_size = &_r;
 		} else {
 			src_size = v4l2_subdev_get_try_compose(
-				subdev, cfg, ssd->sink_pad);
+				subdev, sd_state, ssd->sink_pad);
 		}
 	}
 
@@ -2298,7 +2582,7 @@ static int ccs_set_crop(struct v4l2_subdev *subdev,
 	*crops[sel->pad] = sel->r;
 
 	if (ssd != sensor->pixel_array && sel->pad == CCS_PAD_SINK)
-		ccs_propagate(subdev, cfg, sel->which, V4L2_SEL_TGT_CROP);
+		ccs_propagate(subdev, sd_state, sel->which, V4L2_SEL_TGT_CROP);
 
 	return 0;
 }
@@ -2312,7 +2596,7 @@ static void ccs_get_native_size(struct ccs_subdev *ssd, struct v4l2_rect *r)
 }
 
 static int __ccs_get_selection(struct v4l2_subdev *subdev,
-			       struct v4l2_subdev_pad_config *cfg,
+			       struct v4l2_subdev_state *sd_state,
 			       struct v4l2_subdev_selection *sel)
 {
 	struct ccs_sensor *sensor = to_ccs_sensor(subdev);
@@ -2325,13 +2609,14 @@ static int __ccs_get_selection(struct v4l2_subdev *subdev,
 	if (ret)
 		return ret;
 
-	ccs_get_crop_compose(subdev, cfg, crops, &comp, sel->which);
+	ccs_get_crop_compose(subdev, sd_state, crops, &comp, sel->which);
 
 	if (sel->which == V4L2_SUBDEV_FORMAT_ACTIVE) {
 		sink_fmt = ssd->sink_fmt;
 	} else {
 		struct v4l2_mbus_framefmt *fmt =
-			v4l2_subdev_get_try_format(subdev, cfg, ssd->sink_pad);
+			v4l2_subdev_get_try_format(subdev, sd_state,
+						   ssd->sink_pad);
 
 		sink_fmt.left = 0;
 		sink_fmt.top = 0;
@@ -2362,21 +2647,21 @@ static int __ccs_get_selection(struct v4l2_subdev *subdev,
 }
 
 static int ccs_get_selection(struct v4l2_subdev *subdev,
-			     struct v4l2_subdev_pad_config *cfg,
+			     struct v4l2_subdev_state *sd_state,
 			     struct v4l2_subdev_selection *sel)
 {
 	struct ccs_sensor *sensor = to_ccs_sensor(subdev);
 	int rval;
 
 	mutex_lock(&sensor->mutex);
-	rval = __ccs_get_selection(subdev, cfg, sel);
+	rval = __ccs_get_selection(subdev, sd_state, sel);
 	mutex_unlock(&sensor->mutex);
 
 	return rval;
 }
 
 static int ccs_set_selection(struct v4l2_subdev *subdev,
-			     struct v4l2_subdev_pad_config *cfg,
+			     struct v4l2_subdev_state *sd_state,
 			     struct v4l2_subdev_selection *sel)
 {
 	struct ccs_sensor *sensor = to_ccs_sensor(subdev);
@@ -2400,10 +2685,10 @@ static int ccs_set_selection(struct v4l2_subdev *subdev,
 
 	switch (sel->target) {
 	case V4L2_SEL_TGT_CROP:
-		ret = ccs_set_crop(subdev, cfg, sel);
+		ret = ccs_set_crop(subdev, sd_state, sel);
 		break;
 	case V4L2_SEL_TGT_COMPOSE:
-		ret = ccs_set_compose(subdev, cfg, sel);
+		ret = ccs_set_compose(subdev, sd_state, sel);
 		break;
 	default:
 		ret = -EINVAL;
@@ -2435,8 +2720,7 @@ static int ccs_get_skip_top_lines(struct v4l2_subdev *subdev, u32 *lines)
  */
 
 static ssize_t
-ccs_sysfs_nvm_read(struct device *dev, struct device_attribute *attr,
-		   char *buf)
+nvm_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct v4l2_subdev *subdev = i2c_get_clientdata(to_i2c_client(dev));
 	struct i2c_client *client = v4l2_get_subdevdata(subdev);
@@ -2466,27 +2750,25 @@ ccs_sysfs_nvm_read(struct device *dev, struct device_attribute *attr,
 	 */
 	return rval;
 }
-static DEVICE_ATTR(nvm, S_IRUGO, ccs_sysfs_nvm_read, NULL);
+static DEVICE_ATTR_RO(nvm);
 
 static ssize_t
-ccs_sysfs_ident_read(struct device *dev, struct device_attribute *attr,
-		     char *buf)
+ident_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct v4l2_subdev *subdev = i2c_get_clientdata(to_i2c_client(dev));
 	struct ccs_sensor *sensor = to_ccs_sensor(subdev);
 	struct ccs_module_info *minfo = &sensor->minfo;
 
 	if (minfo->mipi_manufacturer_id)
-		return snprintf(buf, PAGE_SIZE, "%4.4x%4.4x%2.2x\n",
-				minfo->mipi_manufacturer_id, minfo->model_id,
-				minfo->revision_number) + 1;
+		return sysfs_emit(buf, "%4.4x%4.4x%2.2x\n",
+				    minfo->mipi_manufacturer_id, minfo->model_id,
+				    minfo->revision_number) + 1;
 	else
-		return snprintf(buf, PAGE_SIZE, "%2.2x%4.4x%2.2x\n",
-				minfo->smia_manufacturer_id, minfo->model_id,
-				minfo->revision_number) + 1;
+		return sysfs_emit(buf, "%2.2x%4.4x%2.2x\n",
+				    minfo->smia_manufacturer_id, minfo->model_id,
+				    minfo->revision_number) + 1;
 }
-
-static DEVICE_ATTR(ident, S_IRUGO, ccs_sysfs_ident_read, NULL);
+static DEVICE_ATTR_RO(ident);
 
 /* -----------------------------------------------------------------------------
  * V4L2 subdev core operations
@@ -2794,9 +3076,9 @@ static int ccs_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 
 	for (i = 0; i < ssd->npads; i++) {
 		struct v4l2_mbus_framefmt *try_fmt =
-			v4l2_subdev_get_try_format(sd, fh->pad, i);
+			v4l2_subdev_get_try_format(sd, fh->state, i);
 		struct v4l2_rect *try_crop =
-			v4l2_subdev_get_try_crop(sd, fh->pad, i);
+			v4l2_subdev_get_try_crop(sd, fh->state, i);
 		struct v4l2_rect *try_comp;
 
 		ccs_get_native_size(ssd, try_crop);
@@ -2809,7 +3091,7 @@ static int ccs_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 		if (ssd != sensor->pixel_array)
 			continue;
 
-		try_comp = v4l2_subdev_get_try_compose(sd, fh->pad, i);
+		try_comp = v4l2_subdev_get_try_compose(sd, fh->state, i);
 		*try_comp = *try_crop;
 	}
 
@@ -2820,6 +3102,8 @@ static int ccs_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 
 static const struct v4l2_subdev_video_ops ccs_video_ops = {
 	.s_stream = ccs_set_stream,
+	.pre_streamon = ccs_pre_streamon,
+	.post_streamoff = ccs_post_streamoff,
 };
 
 static const struct v4l2_subdev_pad_ops ccs_pad_ops = {
@@ -2867,12 +3151,9 @@ static int __maybe_unused ccs_suspend(struct device *dev)
 	bool streaming = sensor->streaming;
 	int rval;
 
-	rval = pm_runtime_get_sync(dev);
-	if (rval < 0) {
-		pm_runtime_put_noidle(dev);
-
-		return -EAGAIN;
-	}
+	rval = pm_runtime_resume_and_get(dev);
+	if (rval < 0)
+		return rval;
 
 	if (sensor->streaming)
 		ccs_stop_streaming(sensor);
@@ -2905,10 +3186,11 @@ static int ccs_get_hwconfig(struct ccs_sensor *sensor, struct device *dev)
 	struct fwnode_handle *ep;
 	struct fwnode_handle *fwnode = dev_fwnode(dev);
 	u32 rotation;
-	int i;
+	unsigned int i;
 	int rval;
 
-	ep = fwnode_graph_get_next_endpoint(fwnode, NULL);
+	ep = fwnode_graph_get_endpoint_by_id(fwnode, 0, 0,
+					     FWNODE_GRAPH_ENDPOINT_NEXT);
 	if (!ep)
 		return -ENODEV;
 
@@ -2942,8 +3224,6 @@ static int ccs_get_hwconfig(struct ccs_sensor *sensor, struct device *dev)
 		goto out_err;
 	}
 
-	dev_dbg(dev, "lanes %u\n", hwcfg->lanes);
-
 	rval = fwnode_property_read_u32(fwnode, "rotation", &rotation);
 	if (!rval) {
 		switch (rotation) {
@@ -2965,7 +3245,7 @@ static int ccs_get_hwconfig(struct ccs_sensor *sensor, struct device *dev)
 	if (rval)
 		dev_info(dev, "can't get clock-frequency\n");
 
-	dev_dbg(dev, "clk %d, mode %d\n", hwcfg->ext_clk,
+	dev_dbg(dev, "clk %u, mode %u\n", hwcfg->ext_clk,
 		hwcfg->csi_signalling_mode);
 
 	if (!bus_cfg.nr_of_link_frequencies) {
@@ -2984,7 +3264,7 @@ static int ccs_get_hwconfig(struct ccs_sensor *sensor, struct device *dev)
 
 	for (i = 0; i < bus_cfg.nr_of_link_frequencies; i++) {
 		hwcfg->op_sys_clock[i] = bus_cfg.link_frequencies[i];
-		dev_dbg(dev, "freq %d: %lld\n", i, hwcfg->op_sys_clock[i]);
+		dev_dbg(dev, "freq %u: %lld\n", i, hwcfg->op_sys_clock[i]);
 	}
 
 	v4l2_fwnode_endpoint_free(&bus_cfg);
@@ -3080,6 +3360,11 @@ static int ccs_probe(struct i2c_client *client)
 		return -EINVAL;
 	}
 
+	if (!sensor->hwcfg.ext_clk) {
+		dev_err(&client->dev, "cannot work with xclk frequency 0\n");
+		return -EINVAL;
+	}
+
 	sensor->reset = devm_gpiod_get_optional(&client->dev, "reset",
 						GPIOD_OUT_HIGH);
 	if (IS_ERR(sensor->reset))
@@ -3147,6 +3432,10 @@ static int ccs_probe(struct i2c_client *client)
 		rval = -ENODEV;
 		goto out_free_ccs_limits;
 	}
+
+	rval = ccs_update_phy_ctrl(sensor);
+	if (rval < 0)
+		goto out_free_ccs_limits;
 
 	/*
 	 * Handle Sensor Module orientation on the board.
@@ -3290,11 +3579,11 @@ static int ccs_probe(struct i2c_client *client)
 	sensor->pll.scale_n = CCS_LIM(sensor, SCALER_N_MIN);
 
 	ccs_create_subdev(sensor, sensor->scaler, " scaler", 2,
-			  MEDIA_ENT_F_CAM_SENSOR);
+			  MEDIA_ENT_F_PROC_VIDEO_SCALER);
 	ccs_create_subdev(sensor, sensor->binner, " binner", 2,
 			  MEDIA_ENT_F_PROC_VIDEO_SCALER);
 	ccs_create_subdev(sensor, sensor->pixel_array, " pixel_array", 1,
-			  MEDIA_ENT_F_PROC_VIDEO_SCALER);
+			  MEDIA_ENT_F_CAM_SENSOR);
 
 	rval = ccs_init_controls(sensor);
 	if (rval < 0)
@@ -3340,7 +3629,7 @@ static int ccs_probe(struct i2c_client *client)
 	pm_runtime_get_noresume(&client->dev);
 	pm_runtime_enable(&client->dev);
 
-	rval = v4l2_async_register_subdev_sensor_common(&sensor->src->sd);
+	rval = v4l2_async_register_subdev_sensor(&sensor->src->sd);
 	if (rval < 0)
 		goto out_disable_runtime_pm;
 

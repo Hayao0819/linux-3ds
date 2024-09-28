@@ -434,8 +434,15 @@ static int goya_config_etr(struct hl_device *hdev,
 		WREG32(mmPSOC_ETR_BUFWM, 0x3FFC);
 		WREG32(mmPSOC_ETR_RSZ, input->buffer_size);
 		WREG32(mmPSOC_ETR_MODE, input->sink_mode);
-		WREG32(mmPSOC_ETR_AXICTL,
-				0x700 | PSOC_ETR_AXICTL_PROTCTRLBIT1_SHIFT);
+		if (!hdev->asic_prop.fw_security_enabled) {
+			/* make ETR not privileged */
+			val = FIELD_PREP(PSOC_ETR_AXICTL_PROTCTRLBIT0_MASK, 0);
+			/* make ETR non-secured (inverted logic) */
+			val |= FIELD_PREP(PSOC_ETR_AXICTL_PROTCTRLBIT1_MASK, 1);
+			/* burst size 8 */
+			val |= FIELD_PREP(PSOC_ETR_AXICTL_WRBURSTLEN_MASK, 7);
+			WREG32(mmPSOC_ETR_AXICTL, val);
+		}
 		WREG32(mmPSOC_ETR_DBALO,
 				lower_32_bits(input->buffer_address));
 		WREG32(mmPSOC_ETR_DBAHI,
@@ -645,7 +652,7 @@ static int goya_config_spmu(struct hl_device *hdev,
 	return 0;
 }
 
-int goya_debug_coresight(struct hl_device *hdev, void *data)
+int goya_debug_coresight(struct hl_device *hdev, struct hl_ctx *ctx, void *data)
 {
 	struct hl_debug_params *params = data;
 	int rc = 0;
@@ -684,7 +691,7 @@ int goya_debug_coresight(struct hl_device *hdev, void *data)
 	return rc;
 }
 
-void goya_halt_coresight(struct hl_device *hdev)
+void goya_halt_coresight(struct hl_device *hdev, struct hl_ctx *ctx)
 {
 	struct hl_debug_params params = {};
 	int i, rc;

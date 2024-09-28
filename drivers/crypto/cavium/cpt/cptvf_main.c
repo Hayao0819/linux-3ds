@@ -104,17 +104,14 @@ static int alloc_pending_queues(struct pending_qinfo *pqinfo, u32 qlen,
 				u32 nr_queues)
 {
 	u32 i;
-	size_t size;
 	int ret;
 	struct pending_queue *queue = NULL;
 
 	pqinfo->nr_queues = nr_queues;
 	pqinfo->qlen = qlen;
 
-	size = (qlen * sizeof(struct pending_entry));
-
 	for_each_pending_queue(pqinfo, queue, i) {
-		queue->head = kzalloc((size), GFP_KERNEL);
+		queue->head = kcalloc(qlen, sizeof(*queue->head), GFP_KERNEL);
 		if (!queue->head) {
 			ret = -ENOMEM;
 			goto pending_qfail;
@@ -233,10 +230,10 @@ static int alloc_command_queues(struct cpt_vf *cptvf,
 
 			c_size = (rem_q_size > qcsize_bytes) ? qcsize_bytes :
 					rem_q_size;
-			curr->head = (u8 *)dma_alloc_coherent(&pdev->dev,
-							      c_size + CPT_NEXT_CHUNK_PTR_SIZE,
-							      &curr->dma_addr,
-							      GFP_KERNEL);
+			curr->head = dma_alloc_coherent(&pdev->dev,
+							c_size + CPT_NEXT_CHUNK_PTR_SIZE,
+							&curr->dma_addr,
+							GFP_KERNEL);
 			if (!curr->head) {
 				dev_err(&pdev->dev, "Command Q (%d) chunk (%d) allocation failed\n",
 					i, queue->nchunks);

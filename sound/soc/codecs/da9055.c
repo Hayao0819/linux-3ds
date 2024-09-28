@@ -1347,7 +1347,7 @@ static struct snd_soc_dai_driver da9055_dai = {
 		.formats = DA9055_FORMATS,
 	},
 	.ops = &da9055_dai_ops,
-	.symmetric_rates = 1,
+	.symmetric_rate = 1,
 };
 
 static int da9055_set_bias_level(struct snd_soc_component *component,
@@ -1473,8 +1473,7 @@ static const struct regmap_config da9055_regmap_config = {
 	.cache_type = REGCACHE_RBTREE,
 };
 
-static int da9055_i2c_probe(struct i2c_client *i2c,
-			    const struct i2c_device_id *id)
+static int da9055_i2c_probe(struct i2c_client *i2c)
 {
 	struct da9055_priv *da9055;
 	struct da9055_platform_data *pdata = dev_get_platdata(&i2c->dev);
@@ -1533,7 +1532,7 @@ static struct i2c_driver da9055_i2c_driver = {
 		.name = "da9055-codec",
 		.of_match_table = of_match_ptr(da9055_of_match),
 	},
-	.probe		= da9055_i2c_probe,
+	.probe_new	= da9055_i2c_probe,
 	.id_table	= da9055_i2c_id,
 };
 

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause
 /*
- * Copyright (C) 2012-2014, 2019-2020 Intel Corporation
+ * Copyright (C) 2012-2014, 2019-2021 Intel Corporation
  * Copyright (C) 2013-2014 Intel Mobile Communications GmbH
  * Copyright (C) 2015-2016 Intel Deutschland GmbH
  */
@@ -44,7 +44,7 @@ static void iwl_mvm_exit_ctkill(struct iwl_mvm *mvm)
 	iwl_mvm_set_hw_ctkill_state(mvm, false);
 }
 
-void iwl_mvm_tt_temp_changed(struct iwl_mvm *mvm, u32 temp)
+static void iwl_mvm_tt_temp_changed(struct iwl_mvm *mvm, u32 temp)
 {
 	/* ignore the notification if we are in test mode */
 	if (mvm->temperature_test)
@@ -146,8 +146,8 @@ void iwl_mvm_temp_notif(struct iwl_mvm *mvm, struct iwl_rx_cmd_buffer *rxb)
 	if (mvm->tz_device.tzone) {
 		struct iwl_mvm_thermal_device *tz_dev = &mvm->tz_device;
 
-		thermal_notify_framework(tz_dev->tzone,
-					 tz_dev->fw_trips_index[ths_crossed]);
+		thermal_zone_device_update(tz_dev->tzone,
+					   THERMAL_TRIP_VIOLATED);
 	}
 #endif /* CONFIG_THERMAL */
 }
@@ -156,16 +156,15 @@ void iwl_mvm_ct_kill_notif(struct iwl_mvm *mvm, struct iwl_rx_cmd_buffer *rxb)
 {
 	struct iwl_rx_packet *pkt = rxb_addr(rxb);
 	struct ct_kill_notif *notif;
-	int len = iwl_rx_packet_payload_len(pkt);
-
-	if (WARN_ON_ONCE(len != sizeof(*notif))) {
-		IWL_ERR(mvm, "Invalid CT_KILL_NOTIFICATION\n");
-		return;
-	}
 
 	notif = (struct ct_kill_notif *)pkt->data;
 	IWL_DEBUG_TEMP(mvm, "CT Kill notification temperature = %d\n",
 		       notif->temperature);
+	if (iwl_fw_lookup_notif_ver(mvm->fw, PHY_OPS_GROUP,
+				    CT_KILL_NOTIFICATION, 0) > 1)
+		IWL_DEBUG_TEMP(mvm,
+			       "CT kill notification DTS bitmap = 0x%x, Scheme = %d\n",
+			       notif->dts, notif->scheme);
 
 	iwl_mvm_enter_ctkill(mvm);
 }
@@ -246,8 +245,8 @@ int iwl_mvm_get_temp(struct iwl_mvm *mvm, s32 *temp)
 	 * a response. For older versions we send the command and wait for a
 	 * notification (no command TLV for previous versions).
 	 */
-	cmd_ver = iwl_fw_lookup_cmd_ver(mvm->fw, PHY_OPS_GROUP,
-					CMD_DTS_MEASUREMENT_TRIGGER_WIDE,
+	cmd_ver = iwl_fw_lookup_cmd_ver(mvm->fw,
+					WIDE_ID(PHY_OPS_GROUP, CMD_DTS_MEASUREMENT_TRIGGER_WIDE),
 					IWL_FW_CMD_VER_UNKNOWN);
 	if (cmd_ver == 1)
 		return iwl_mvm_send_temp_cmd(mvm, true, temp);
@@ -267,7 +266,7 @@ int iwl_mvm_get_temp(struct iwl_mvm *mvm, s32 *temp)
 	ret = iwl_wait_notification(&mvm->notif_wait, &wait_temp_notif,
 				    IWL_MVM_TEMP_NOTIF_WAIT_TIMEOUT);
 	if (ret)
-		IWL_ERR(mvm, "Getting the temperature timed out\n");
+		IWL_WARN(mvm, "Getting the temperature timed out\n");
 
 	return ret;
 }

@@ -179,7 +179,7 @@ static int qtnf_netdev_set_mac_address(struct net_device *ndev, void *addr)
 					     sa->sa_data);
 
 	if (ret)
-		memcpy(ndev->dev_addr, old_addr, ETH_ALEN);
+		eth_hw_addr_set(ndev, old_addr);
 
 	return ret;
 }
@@ -478,7 +478,7 @@ int qtnf_core_net_attach(struct qtnf_wmac *mac, struct qtnf_vif *vif,
 	dev->needs_free_netdev = true;
 	dev_net_set(dev, wiphy_net(wiphy));
 	dev->ieee80211_ptr = &vif->wdev;
-	ether_addr_copy(dev->dev_addr, vif->mac_addr);
+	eth_hw_addr_set(dev, vif->mac_addr);
 	dev->flags |= IFF_BROADCAST | IFF_MULTICAST;
 	dev->watchdog_timeo = QTNF_DEF_WDOG_TIMEOUT;
 	dev->tx_queue_len = 100;
@@ -492,7 +492,7 @@ int qtnf_core_net_attach(struct qtnf_wmac *mac, struct qtnf_vif *vif,
 
 	SET_NETDEV_DEV(dev, wiphy_dev(wiphy));
 
-	ret = register_netdevice(dev);
+	ret = cfg80211_register_netdevice(dev);
 	if (ret) {
 		free_netdev(dev);
 		vif->netdev = NULL;
@@ -611,8 +611,9 @@ static int qtnf_core_mac_attach(struct qtnf_bus *bus, unsigned int macid)
 	mac->wiphy_registered = 1;
 
 	rtnl_lock();
-
+	wiphy_lock(priv_to_wiphy(mac));
 	ret = qtnf_core_net_attach(mac, vif, "wlan%d", NET_NAME_ENUM);
+	wiphy_unlock(priv_to_wiphy(mac));
 	rtnl_unlock();
 
 	if (ret) {
@@ -810,13 +811,11 @@ void qtnf_core_detach(struct qtnf_bus *bus)
 	bus->fw_state = QTNF_FW_STATE_DETACHED;
 
 	if (bus->workqueue) {
-		flush_workqueue(bus->workqueue);
 		destroy_workqueue(bus->workqueue);
 		bus->workqueue = NULL;
 	}
 
 	if (bus->hprio_workqueue) {
-		flush_workqueue(bus->hprio_workqueue);
 		destroy_workqueue(bus->hprio_workqueue);
 		bus->hprio_workqueue = NULL;
 	}

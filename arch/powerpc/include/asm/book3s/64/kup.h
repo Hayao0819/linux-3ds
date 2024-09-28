@@ -90,7 +90,7 @@
 	/* Prevent access to userspace using any key values */
 	LOAD_REG_IMMEDIATE(\gpr2, AMR_KUAP_BLOCKED)
 999:	tdne	\gpr1, \gpr2
-	EMIT_BUG_ENTRY 999b, __FILE__, __LINE__, (BUGFLAG_WARNING | BUGFLAG_ONCE)
+	EMIT_WARN_ENTRY 999b, __FILE__, __LINE__, (BUGFLAG_WARNING | BUGFLAG_ONCE)
 	END_MMU_FTR_SECTION_NESTED_IFSET(MMU_FTR_BOOK3S_KUAP, 67)
 #endif
 .endm
@@ -199,29 +199,40 @@ DECLARE_STATIC_KEY_FALSE(uaccess_flush_key);
 
 #ifdef CONFIG_PPC_PKEY
 
+extern u64 __ro_after_init default_uamor;
+extern u64 __ro_after_init default_amr;
+extern u64 __ro_after_init default_iamr;
+
 #include <asm/mmu.h>
 #include <asm/ptrace.h>
 
-/*
- * For kernel thread that doesn't have thread.regs return
- * default AMR/IAMR values.
+/* usage of kthread_use_mm() should inherit the
+ * AMR value of the operating address space. But, the AMR value is
+ * thread-specific and we inherit the address space and not thread
+ * access restrictions. Because of this ignore AMR value when accessing
+ * userspace via kernel thread.
  */
 static inline u64 current_thread_amr(void)
 {
 	if (current->thread.regs)
 		return current->thread.regs->amr;
-	return AMR_KUAP_BLOCKED;
+	return default_amr;
 }
 
 static inline u64 current_thread_iamr(void)
 {
 	if (current->thread.regs)
 		return current->thread.regs->iamr;
-	return AMR_KUEP_BLOCKED;
+	return default_iamr;
 }
 #endif /* CONFIG_PPC_PKEY */
 
 #ifdef CONFIG_PPC_KUAP
+
+static __always_inline bool kuap_is_disabled(void)
+{
+	return !mmu_has_feature(MMU_FTR_BOOK3S_KUAP);
+}
 
 static inline void kuap_user_restore(struct pt_regs *regs)
 {
@@ -262,60 +273,38 @@ static inline void kuap_user_restore(struct pt_regs *regs)
 	 */
 }
 
-static inline void kuap_kernel_restore(struct pt_regs *regs,
-					   unsigned long amr)
+static inline void __kuap_kernel_restore(struct pt_regs *regs, unsigned long amr)
 {
-	if (mmu_has_feature(MMU_FTR_BOOK3S_KUAP)) {
-		if (unlikely(regs->amr != amr)) {
-			isync();
-			mtspr(SPRN_AMR, regs->amr);
-			/*
-			 * No isync required here because we are about to rfi
-			 * back to previous context before any user accesses
-			 * would be made, which is a CSI.
-			 */
-		}
-	}
+	if (likely(regs->amr == amr))
+		return;
+
+	isync();
+	mtspr(SPRN_AMR, regs->amr);
 	/*
+	 * No isync required here because we are about to rfi
+	 * back to previous context before any user accesses
+	 * would be made, which is a CSI.
+	 *
 	 * No need to restore IAMR when returning to kernel space.
 	 */
 }
 
-static inline unsigned long kuap_get_and_check_amr(void)
+static inline unsigned long __kuap_get_and_assert_locked(void)
 {
-	if (mmu_has_feature(MMU_FTR_BOOK3S_KUAP)) {
-		unsigned long amr = mfspr(SPRN_AMR);
-		if (IS_ENABLED(CONFIG_PPC_KUAP_DEBUG)) /* kuap_check_amr() */
-			WARN_ON_ONCE(amr != AMR_KUAP_BLOCKED);
-		return amr;
-	}
-	return 0;
+	unsigned long amr = mfspr(SPRN_AMR);
+
+	if (IS_ENABLED(CONFIG_PPC_KUAP_DEBUG)) /* kuap_check_amr() */
+		WARN_ON_ONCE(amr != AMR_KUAP_BLOCKED);
+	return amr;
 }
 
-#else /* CONFIG_PPC_PKEY */
-
-static inline void kuap_user_restore(struct pt_regs *regs)
+/* Do nothing, book3s/64 does that in ASM */
+static inline void __kuap_lock(void)
 {
 }
 
-static inline void kuap_kernel_restore(struct pt_regs *regs, unsigned long amr)
+static inline void __kuap_save_and_lock(struct pt_regs *regs)
 {
-}
-
-static inline unsigned long kuap_get_and_check_amr(void)
-{
-	return 0;
-}
-
-#endif /* CONFIG_PPC_PKEY */
-
-
-#ifdef CONFIG_PPC_KUAP
-
-static inline void kuap_check_amr(void)
-{
-	if (IS_ENABLED(CONFIG_PPC_KUAP_DEBUG) && mmu_has_feature(MMU_FTR_BOOK3S_KUAP))
-		WARN_ON_ONCE(mfspr(SPRN_AMR) != AMR_KUAP_BLOCKED);
 }
 
 /*
@@ -333,15 +322,15 @@ static inline unsigned long get_kuap(void)
 	 * This has no effect in terms of actually blocking things on hash,
 	 * so it doesn't break anything.
 	 */
-	if (!early_mmu_has_feature(MMU_FTR_BOOK3S_KUAP))
+	if (!mmu_has_feature(MMU_FTR_BOOK3S_KUAP))
 		return AMR_KUAP_BLOCKED;
 
 	return mfspr(SPRN_AMR);
 }
 
-static inline void set_kuap(unsigned long value)
+static __always_inline void set_kuap(unsigned long value)
 {
-	if (!early_mmu_has_feature(MMU_FTR_BOOK3S_KUAP))
+	if (!mmu_has_feature(MMU_FTR_BOOK3S_KUAP))
 		return;
 
 	/*
@@ -353,11 +342,8 @@ static inline void set_kuap(unsigned long value)
 	isync();
 }
 
-static inline bool bad_kuap_fault(struct pt_regs *regs, unsigned long address,
-				  bool is_write)
+static inline bool __bad_kuap_fault(struct pt_regs *regs, unsigned long address, bool is_write)
 {
-	if (!mmu_has_feature(MMU_FTR_BOOK3S_KUAP))
-		return false;
 	/*
 	 * For radix this will be a storage protection fault (DSISR_PROTFAULT).
 	 * For hash this will be a key fault (DSISR_KEYFAULT)
@@ -412,8 +398,7 @@ static __always_inline void allow_user_access(void __user *to, const void __user
 
 #endif /* !CONFIG_PPC_KUAP */
 
-static inline void prevent_user_access(void __user *to, const void __user *from,
-				       unsigned long size, unsigned long dir)
+static __always_inline void prevent_user_access(unsigned long dir)
 {
 	set_kuap(AMR_KUAP_BLOCKED);
 	if (static_branch_unlikely(&uaccess_flush_key))

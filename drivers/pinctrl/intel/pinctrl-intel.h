@@ -143,6 +143,10 @@ struct intel_community {
 /* Additional features supported by the hardware */
 #define PINCTRL_FEATURE_DEBOUNCE	BIT(0)
 #define PINCTRL_FEATURE_1K_PD		BIT(1)
+#define PINCTRL_FEATURE_GPIO_HW_INFO	BIT(2)
+#define PINCTRL_FEATURE_PWM		BIT(3)
+#define PINCTRL_FEATURE_BLINK		BIT(4)
+#define PINCTRL_FEATURE_EXP		BIT(5)
 
 /**
  * PIN_GROUP - Declare a pin group
@@ -219,7 +223,6 @@ struct intel_pinctrl_context {
  * @pctldesc: Pin controller description
  * @pctldev: Pointer to the pin controller device
  * @chip: GPIO chip in this pin controller
- * @irqchip: IRQ chip in this pin controller
  * @soc: SoC/PCH specific pin configuration data
  * @communities: All communities in this pin controller
  * @ncommunities: Number of communities in this pin controller
@@ -232,7 +235,6 @@ struct intel_pinctrl {
 	struct pinctrl_desc pctldesc;
 	struct pinctrl_dev *pctldev;
 	struct gpio_chip chip;
-	struct irq_chip irqchip;
 	const struct intel_pinctrl_soc_data *soc;
 	struct intel_community *communities;
 	size_t ncommunities;

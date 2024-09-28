@@ -43,6 +43,8 @@
 #include "dcn20/dcn20_dsc.h"
 #include "dcn20/dcn20_resource.h"
 
+#include "dml/dcn30/dcn30_fpu.h"
+
 #include "dcn10/dcn10_resource.h"
 
 #include "dce/dce_abm.h"
@@ -53,155 +55,25 @@
 #include "dce/dce_i2c_hw.h"
 #include "dce/dce_panel_cntl.h"
 #include "dce/dmub_abm.h"
+#include "dce/dmub_psr.h"
+#include "clk_mgr.h"
 
 #include "hw_sequencer_private.h"
 #include "reg_helper.h"
 #include "resource.h"
 #include "vm_helper.h"
 
+#include "dml/dcn302/dcn302_fpu.h"
+
 #include "dimgrey_cavefish_ip_offset.h"
 #include "dcn/dcn_3_0_2_offset.h"
 #include "dcn/dcn_3_0_2_sh_mask.h"
-#include "dcn/dpcs_3_0_0_offset.h"
-#include "dcn/dpcs_3_0_0_sh_mask.h"
+#include "dpcs/dpcs_3_0_0_offset.h"
+#include "dpcs/dpcs_3_0_0_sh_mask.h"
 #include "nbio/nbio_7_4_offset.h"
 #include "amdgpu_socbb.h"
 
 #define DC_LOGGER_INIT(logger)
-
-struct _vcs_dpi_ip_params_st dcn3_02_ip = {
-		.use_min_dcfclk = 0,
-		.clamp_min_dcfclk = 0,
-		.odm_capable = 1,
-		.gpuvm_enable = 1,
-		.hostvm_enable = 0,
-		.gpuvm_max_page_table_levels = 4,
-		.hostvm_max_page_table_levels = 4,
-		.hostvm_cached_page_table_levels = 0,
-		.pte_group_size_bytes = 2048,
-		.num_dsc = 5,
-		.rob_buffer_size_kbytes = 184,
-		.det_buffer_size_kbytes = 184,
-		.dpte_buffer_size_in_pte_reqs_luma = 64,
-		.dpte_buffer_size_in_pte_reqs_chroma = 34,
-		.pde_proc_buffer_size_64k_reqs = 48,
-		.dpp_output_buffer_pixels = 2560,
-		.opp_output_buffer_lines = 1,
-		.pixel_chunk_size_kbytes = 8,
-		.pte_enable = 1,
-		.max_page_table_levels = 2,
-		.pte_chunk_size_kbytes = 2,  // ?
-		.meta_chunk_size_kbytes = 2,
-		.writeback_chunk_size_kbytes = 8,
-		.line_buffer_size_bits = 789504,
-		.is_line_buffer_bpp_fixed = 0,  // ?
-		.line_buffer_fixed_bpp = 0,     // ?
-		.dcc_supported = true,
-		.writeback_interface_buffer_size_kbytes = 90,
-		.writeback_line_buffer_buffer_size = 0,
-		.max_line_buffer_lines = 12,
-		.writeback_luma_buffer_size_kbytes = 12,  // writeback_line_buffer_buffer_size = 656640
-		.writeback_chroma_buffer_size_kbytes = 8,
-		.writeback_chroma_line_buffer_width_pixels = 4,
-		.writeback_max_hscl_ratio = 1,
-		.writeback_max_vscl_ratio = 1,
-		.writeback_min_hscl_ratio = 1,
-		.writeback_min_vscl_ratio = 1,
-		.writeback_max_hscl_taps = 1,
-		.writeback_max_vscl_taps = 1,
-		.writeback_line_buffer_luma_buffer_size = 0,
-		.writeback_line_buffer_chroma_buffer_size = 14643,
-		.cursor_buffer_size = 8,
-		.cursor_chunk_size = 2,
-		.max_num_otg = 5,
-		.max_num_dpp = 5,
-		.max_num_wb = 1,
-		.max_dchub_pscl_bw_pix_per_clk = 4,
-		.max_pscl_lb_bw_pix_per_clk = 2,
-		.max_lb_vscl_bw_pix_per_clk = 4,
-		.max_vscl_hscl_bw_pix_per_clk = 4,
-		.max_hscl_ratio = 6,
-		.max_vscl_ratio = 6,
-		.hscl_mults = 4,
-		.vscl_mults = 4,
-		.max_hscl_taps = 8,
-		.max_vscl_taps = 8,
-		.dispclk_ramp_margin_percent = 1,
-		.underscan_factor = 1.11,
-		.min_vblank_lines = 32,
-		.dppclk_delay_subtotal = 46,
-		.dynamic_metadata_vm_enabled = true,
-		.dppclk_delay_scl_lb_only = 16,
-		.dppclk_delay_scl = 50,
-		.dppclk_delay_cnvc_formatter = 27,
-		.dppclk_delay_cnvc_cursor = 6,
-		.dispclk_delay_subtotal = 119,
-		.dcfclk_cstate_latency = 5.2, // SRExitTime
-		.max_inter_dcn_tile_repeaters = 8,
-		.max_num_hdmi_frl_outputs = 1,
-		.odm_combine_4to1_supported = true,
-
-		.xfc_supported = false,
-		.xfc_fill_bw_overhead_percent = 10.0,
-		.xfc_fill_constant_bytes = 0,
-		.gfx7_compat_tiling_supported = 0,
-		.number_of_cursors = 1,
-};
-
-struct _vcs_dpi_soc_bounding_box_st dcn3_02_soc = {
-		.clock_limits = {
-				{
-						.state = 0,
-						.dispclk_mhz = 562.0,
-						.dppclk_mhz = 300.0,
-						.phyclk_mhz = 300.0,
-						.phyclk_d18_mhz = 667.0,
-						.dscclk_mhz = 405.6,
-				},
-		},
-
-		.min_dcfclk = 500.0, /* TODO: set this to actual min DCFCLK */
-		.num_states = 1,
-		.sr_exit_time_us = 5.20,
-		.sr_enter_plus_exit_time_us = 9.60,
-		.urgent_latency_us = 4.0,
-		.urgent_latency_pixel_data_only_us = 4.0,
-		.urgent_latency_pixel_mixed_with_vm_data_us = 4.0,
-		.urgent_latency_vm_data_only_us = 4.0,
-		.urgent_out_of_order_return_per_channel_pixel_only_bytes = 4096,
-		.urgent_out_of_order_return_per_channel_pixel_and_vm_bytes = 4096,
-		.urgent_out_of_order_return_per_channel_vm_only_bytes = 4096,
-		.pct_ideal_dram_sdp_bw_after_urgent_pixel_only = 80.0,
-		.pct_ideal_dram_sdp_bw_after_urgent_pixel_and_vm = 60.0,
-		.pct_ideal_dram_sdp_bw_after_urgent_vm_only = 40.0,
-		.max_avg_sdp_bw_use_normal_percent = 60.0,
-		.max_avg_dram_bw_use_normal_percent = 40.0,
-		.writeback_latency_us = 12.0,
-		.max_request_size_bytes = 256,
-		.fabric_datapath_to_dcn_data_return_bytes = 64,
-		.dcn_downspread_percent = 0.5,
-		.downspread_percent = 0.38,
-		.dram_page_open_time_ns = 50.0,
-		.dram_rw_turnaround_time_ns = 17.5,
-		.dram_return_buffer_per_channel_bytes = 8192,
-		.round_trip_ping_latency_dcfclk_cycles = 156,
-		.urgent_out_of_order_return_per_channel_bytes = 4096,
-		.channel_interleave_bytes = 256,
-		.num_banks = 8,
-		.gpuvm_min_page_size_bytes = 4096,
-		.hostvm_min_page_size_bytes = 4096,
-		.dram_clock_change_latency_us = 350,
-		.dummy_pstate_latency_us = 5,
-		.writeback_dram_clock_change_latency_us = 23.0,
-		.return_bus_width_bytes = 64,
-		.dispclk_dppclk_vco_speed_mhz = 3650,
-		.xfc_bus_transport_time_us = 20,      // ?
-		.xfc_xbuf_latency_tolerance_us = 4,  // ?
-		.use_urgent_burst_bw = 1,            // ?
-		.do_urgent_latency_adjustment = true,
-		.urgent_latency_adjustment_fabric_clock_component_us = 1.0,
-		.urgent_latency_adjustment_fabric_clock_reference_mhz = 1000,
-};
 
 static const struct dc_debug_options debug_defaults_drv = {
 		.disable_dmcu = true,
@@ -221,6 +93,7 @@ static const struct dc_debug_options debug_defaults_drv = {
 		.underflow_assert_delay_us = 0xFFFFFFFF,
 		.dwb_fi_phase = -1, // -1 = disable,
 		.dmub_command_table = true,
+		.use_max_lb = true
 };
 
 static const struct dc_debug_options debug_defaults_diags = {
@@ -238,6 +111,8 @@ static const struct dc_debug_options debug_defaults_diags = {
 		.dwb_fi_phase = -1, // -1 = disable
 		.dmub_command_table = true,
 		.enable_tri_buf = true,
+		.disable_psr = true,
+		.use_max_lb = true
 };
 
 enum dcn302_clk_src_array_id {
@@ -271,7 +146,7 @@ static const struct dc_plane_cap plane_cap = {
 				.argb8888 = true,
 				.nv12 = true,
 				.fp16 = true,
-				.p010 = false,
+				.p010 = true,
 				.ayuv = false,
 		},
 		.max_upscale_factor = {
@@ -279,10 +154,11 @@ static const struct dc_plane_cap plane_cap = {
 				.nv12 = 16000,
 				.fp16 = 16000
 		},
+		/* 6:1 downscaling ratio: 1000/6 = 166.666 */
 		.max_downscale_factor = {
-				.argb8888 = 600,
-				.nv12 = 600,
-				.fp16 = 600
+				.argb8888 = 167,
+				.nv12 = 167,
+				.fp16 = 167
 		},
 		16,
 		16
@@ -536,8 +412,12 @@ static struct stream_encoder *dcn302_stream_encoder_create(enum engine_id eng_id
 	vpg = dcn302_vpg_create(ctx, vpg_inst);
 	afmt = dcn302_afmt_create(ctx, afmt_inst);
 
-	if (!enc1 || !vpg || !afmt)
+	if (!enc1 || !vpg || !afmt) {
+		kfree(enc1);
+		kfree(vpg);
+		kfree(afmt);
 		return NULL;
+	}
 
 	dcn30_dio_stream_encoder_construct(enc1, ctx, ctx->dc_bios, eng_id, vpg, afmt, &stream_enc_regs[eng_id],
 			&se_shift, &se_mask);
@@ -1088,14 +968,29 @@ static bool init_soc_bounding_box(struct dc *dc,  struct resource_pool *pool)
 	DC_LOGGER_INIT(dc->ctx->logger);
 
 	if (!is_soc_bounding_box_valid(dc)) {
-		DC_LOG_ERROR("%s: not valid soc bounding box/n", __func__);
+		DC_LOG_ERROR("%s: not valid soc bounding box\n", __func__);
 		return false;
 	}
 
 	loaded_ip->max_num_otg = pool->pipe_count;
 	loaded_ip->max_num_dpp = pool->pipe_count;
 	loaded_ip->clamp_min_dcfclk = dc->config.clamp_min_dcfclk;
+	DC_FP_START();
 	dcn20_patch_bounding_box(dc, loaded_bb);
+	DC_FP_END();
+
+	if (dc->ctx->dc_bios->funcs->get_soc_bb_info) {
+		struct bp_soc_bb_info bb_info = { 0 };
+
+		if (dc->ctx->dc_bios->funcs->get_soc_bb_info(
+			    dc->ctx->dc_bios, &bb_info) == BP_RESULT_OK) {
+
+				DC_FP_START();
+				dcn302_fpu_init_soc_bounding_box(bb_info);
+				DC_FP_END();
+		}
+	}
+
 	return true;
 }
 
@@ -1213,6 +1108,9 @@ static void dcn302_resource_destruct(struct resource_pool *pool)
 			dce_abm_destroy(&pool->multiple_abms[i]);
 	}
 
+	if (pool->psr != NULL)
+		dmub_psr_destroy(&pool->psr);
+
 	if (pool->dccg != NULL)
 		dcn_dccg_destroy(&pool->dccg);
 }
@@ -1224,12 +1122,20 @@ static void dcn302_destroy_resource_pool(struct resource_pool **pool)
 	*pool = NULL;
 }
 
+void dcn302_update_bw_bounding_box(struct dc *dc, struct clk_bw_params *bw_params)
+{
+	DC_FP_START();
+	dcn302_fpu_update_bw_bounding_box(dc, bw_params);
+	DC_FP_END();
+}
+
 static struct resource_funcs dcn302_res_pool_funcs = {
 		.destroy = dcn302_destroy_resource_pool,
 		.link_enc_create = dcn302_link_encoder_create,
 		.panel_cntl_create = dcn302_panel_cntl_create,
 		.validate_bandwidth = dcn30_validate_bandwidth,
 		.calculate_wm_and_dlg = dcn30_calculate_wm_and_dlg,
+		.update_soc_for_wm_a = dcn30_update_soc_for_wm_a,
 		.populate_dml_pipes = dcn30_populate_dml_pipes_from_context,
 		.acquire_idle_pipe_for_layer = dcn20_acquire_idle_pipe_for_layer,
 		.add_stream_to_ctx = dcn30_add_stream_to_ctx,
@@ -1240,7 +1146,7 @@ static struct resource_funcs dcn302_res_pool_funcs = {
 		.find_first_free_match_stream_enc_for_link = dcn10_find_first_free_match_stream_enc_for_link,
 		.acquire_post_bldn_3dlut = dcn30_acquire_post_bldn_3dlut,
 		.release_post_bldn_3dlut = dcn30_release_post_bldn_3dlut,
-		.update_bw_bounding_box = dcn30_update_bw_bounding_box,
+		.update_bw_bounding_box = dcn302_update_bw_bounding_box,
 		.patch_unknown_plane_state = dcn20_patch_unknown_plane_state,
 };
 
@@ -1266,7 +1172,7 @@ static const struct dccg_mask dccg_mask = {
 };
 
 #define abm_regs(id)\
-		[id] = { ABM_DCN301_REG_LIST(id) }
+		[id] = { ABM_DCN302_REG_LIST(id) }
 
 static const struct dce_abm_registers abm_regs[] = {
 		abm_regs(0),
@@ -1311,8 +1217,13 @@ static bool dcn302_resource_construct(
 	dc->caps.max_cursor_size = 256;
 	dc->caps.min_horizontal_blanking_period = 80;
 	dc->caps.dmdata_alloc_size = 2048;
-
-	dc->caps.max_slave_planes = 1;
+	dc->caps.mall_size_per_mem_channel = 4;
+	/* total size = mall per channel * num channels * 1024 * 1024 */
+	dc->caps.mall_size_total = dc->caps.mall_size_per_mem_channel * dc->ctx->dc_bios->vram_info.num_chans * 1048576;
+	dc->caps.cursor_cache_size = dc->caps.max_cursor_size * dc->caps.max_cursor_size * 8;
+	dc->caps.max_slave_planes = 2;
+	dc->caps.max_slave_yuv_planes = 2;
+	dc->caps.max_slave_rgb_planes = 2;
 	dc->caps.post_blend_color_processing = true;
 	dc->caps.force_dp_tps4_for_cp2520 = true;
 	dc->caps.extended_aux_timeout_support = true;
@@ -1352,10 +1263,26 @@ static bool dcn302_resource_construct(
 	dc->caps.color.mpc.ogam_rom_caps.hlg = 0;
 	dc->caps.color.mpc.ocsc = 1;
 
+	/* read VBIOS LTTPR caps */
+	if (ctx->dc_bios->funcs->get_lttpr_caps) {
+		enum bp_result bp_query_result;
+		uint8_t is_vbios_lttpr_enable = 0;
+
+		bp_query_result = ctx->dc_bios->funcs->get_lttpr_caps(ctx->dc_bios, &is_vbios_lttpr_enable);
+		dc->caps.vbios_lttpr_enable = (bp_query_result == BP_RESULT_OK) && !!is_vbios_lttpr_enable;
+	}
+
+	if (ctx->dc_bios->funcs->get_lttpr_interop) {
+		enum bp_result bp_query_result;
+		uint8_t is_vbios_interop_enabled = 0;
+
+		bp_query_result = ctx->dc_bios->funcs->get_lttpr_interop(ctx->dc_bios,
+				&is_vbios_interop_enabled);
+		dc->caps.vbios_lttpr_aware = (bp_query_result == BP_RESULT_OK) && !!is_vbios_interop_enabled;
+	}
+
 	if (dc->ctx->dce_environment == DCE_ENV_PRODUCTION_DRV)
 		dc->debug = debug_defaults_drv;
-	else if (dc->ctx->dce_environment == DCE_ENV_FPGA_MAXIMUS)
-		dc->debug = debug_defaults_diags;
 	else
 		dc->debug = debug_defaults_diags;
 
@@ -1468,6 +1395,14 @@ static bool dcn302_resource_construct(
 		}
 	}
 	pool->timing_generator_count = i;
+
+	/* PSR */
+	pool->psr = dmub_psr_create(ctx);
+	if (pool->psr == NULL) {
+		dm_error("DC: failed to create psr!\n");
+		BREAK_TO_DEBUGGER();
+		goto create_fail;
+	}
 
 	/* ABMs */
 	for (i = 0; i < pool->res_cap->num_timing_generator; i++) {

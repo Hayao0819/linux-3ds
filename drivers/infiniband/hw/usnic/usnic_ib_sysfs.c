@@ -31,7 +31,6 @@
  *
  */
 
-#include <linux/module.h>
 #include <linux/init.h>
 #include <linux/errno.h>
 
@@ -214,7 +213,7 @@ static ssize_t summary_show(struct usnic_ib_qp_grp *qp_grp, char *buf)
 	struct usnic_vnic_res *vnic_res;
 	int len;
 
-	len = sysfs_emit(buf, "QPN: %d State: (%s) PID: %u VF Idx: %hu ",
+	len = sysfs_emit(buf, "QPN: %d State: (%s) PID: %u VF Idx: %hu",
 			 qp_grp->ibqp.qp_num,
 			 usnic_ib_qp_grp_state_to_string(qp_grp->state),
 			 qp_grp->owner_pid,
@@ -224,14 +223,13 @@ static ssize_t summary_show(struct usnic_ib_qp_grp *qp_grp, char *buf)
 		res_chunk = qp_grp->res_chunk_list[i];
 		for (j = 0; j < res_chunk->cnt; j++) {
 			vnic_res = res_chunk->res[j];
-			len += sysfs_emit_at(
-				buf, len, "%s[%d] ",
+			len += sysfs_emit_at(buf, len, " %s[%d]",
 				usnic_vnic_res_type_to_str(vnic_res->type),
 				vnic_res->vnic_idx);
 		}
 	}
 
-	len = sysfs_emit_at(buf, len, "\n");
+	len += sysfs_emit_at(buf, len, "\n");
 
 	return len;
 }
@@ -244,10 +242,11 @@ static struct attribute *usnic_ib_qpn_default_attrs[] = {
 	&qpn_attr_summary.attr,
 	NULL
 };
+ATTRIBUTE_GROUPS(usnic_ib_qpn_default);
 
 static struct kobj_type usnic_ib_qpn_type = {
 	.sysfs_ops = &usnic_ib_qpn_sysfs_ops,
-	.default_attrs = usnic_ib_qpn_default_attrs
+	.default_groups = usnic_ib_qpn_default_groups,
 };
 
 int usnic_ib_sysfs_register_usdev(struct usnic_ib_dev *us_ibdev)

@@ -61,6 +61,8 @@ static void dc_plane_construct(struct dc_context *ctx, struct dc_plane_state *pl
 		plane_state->blend_tf->type = TF_TYPE_BYPASS;
 	}
 
+	plane_state->pre_multiplied_alpha = true;
+
 }
 
 static void dc_plane_destruct(struct dc_plane_state *plane_state)
@@ -115,7 +117,7 @@ struct dc_plane_state *dc_create_plane_state(struct dc *dc)
 	return plane_state;
 }
 
-/**
+/*
  *****************************************************************************
  *  Function: dc_plane_get_status
  *

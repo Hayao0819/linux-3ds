@@ -6,12 +6,15 @@
 //  MyungJoo Ham <myungjoo.ham@samsung.com>
 
 #include <linux/err.h>
+#include <linux/extcon.h>
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/platform_device.h>
 #include <linux/power_supply.h>
 #include <linux/mfd/max8997.h>
 #include <linux/mfd/max8997-private.h>
+#include <linux/regulator/consumer.h>
+#include <linux/devm-helpers.h>
 
 /* MAX8997_REG_STATUS4 */
 #define DCINOK_SHIFT		1
@@ -31,6 +34,10 @@ struct charger_data {
 	struct device *dev;
 	struct max8997_dev *iodev;
 	struct power_supply *battery;
+	struct regulator *reg;
+	struct extcon_dev *edev;
+	struct notifier_block extcon_nb;
+	struct work_struct extcon_work;
 };
 
 static enum power_supply_property max8997_battery_props[] = {
@@ -88,6 +95,60 @@ static int max8997_battery_get_property(struct power_supply *psy,
 	return 0;
 }
 
+static void max8997_battery_extcon_evt_worker(struct work_struct *work)
+{
+	struct charger_data *charger =
+	    container_of(work, struct charger_data, extcon_work);
+	struct extcon_dev *edev = charger->edev;
+	int current_limit;
+
+	if (extcon_get_state(edev, EXTCON_CHG_USB_SDP) > 0) {
+		dev_dbg(charger->dev, "USB SDP charger is connected\n");
+		current_limit = 450000;
+	} else if (extcon_get_state(edev, EXTCON_CHG_USB_DCP) > 0) {
+		dev_dbg(charger->dev, "USB DCP charger is connected\n");
+		current_limit = 650000;
+	} else if (extcon_get_state(edev, EXTCON_CHG_USB_FAST) > 0) {
+		dev_dbg(charger->dev, "USB FAST charger is connected\n");
+		current_limit = 650000;
+	} else if (extcon_get_state(edev, EXTCON_CHG_USB_SLOW) > 0) {
+		dev_dbg(charger->dev, "USB SLOW charger is connected\n");
+		current_limit = 650000;
+	} else if (extcon_get_state(edev, EXTCON_CHG_USB_CDP) > 0) {
+		dev_dbg(charger->dev, "USB CDP charger is connected\n");
+		current_limit = 650000;
+	} else {
+		dev_dbg(charger->dev, "USB charger is disconnected\n");
+		current_limit = -1;
+	}
+
+	if (current_limit > 0) {
+		int ret = regulator_set_current_limit(charger->reg, current_limit, current_limit);
+
+		if (ret) {
+			dev_err(charger->dev, "failed to set current limit: %d\n", ret);
+			return;
+		}
+		ret = regulator_enable(charger->reg);
+		if (ret)
+			dev_err(charger->dev, "failed to enable regulator: %d\n", ret);
+	} else {
+		int ret  = regulator_disable(charger->reg);
+
+		if (ret)
+			dev_err(charger->dev, "failed to disable regulator: %d\n", ret);
+	}
+}
+
+static int max8997_battery_extcon_evt(struct notifier_block *nb,
+				unsigned long event, void *param)
+{
+	struct charger_data *charger =
+		container_of(nb, struct charger_data, extcon_nb);
+	schedule_work(&charger->extcon_work);
+	return NOTIFY_OK;
+}
+
 static const struct power_supply_desc max8997_battery_desc = {
 	.name		= "max8997_pmic",
 	.type		= POWER_SUPPLY_TYPE_BATTERY,
@@ -101,6 +162,7 @@ static int max8997_battery_probe(struct platform_device *pdev)
 	int ret = 0;
 	struct charger_data *charger;
 	struct max8997_dev *iodev = dev_get_drvdata(pdev->dev.parent);
+	struct device_node *np = pdev->dev.of_node;
 	struct i2c_client *i2c = iodev->i2c;
 	struct max8997_platform_data *pdata = iodev->pdata;
 	struct power_supply_config psy_cfg = {};
@@ -168,6 +230,38 @@ static int max8997_battery_probe(struct platform_device *pdev)
 	if (IS_ERR(charger->battery)) {
 		dev_err(&pdev->dev, "failed: power supply register\n");
 		return PTR_ERR(charger->battery);
+	}
+
+	// grab regulator from parent device's node
+	pdev->dev.of_node = iodev->dev->of_node;
+	charger->reg = devm_regulator_get_optional(&pdev->dev, "charger");
+	pdev->dev.of_node = np;
+	if (IS_ERR(charger->reg)) {
+		if (PTR_ERR(charger->reg) == -EPROBE_DEFER)
+			return -EPROBE_DEFER;
+		dev_info(&pdev->dev, "couldn't get charger regulator\n");
+	}
+	charger->edev = extcon_get_extcon_dev("max8997-muic");
+	if (IS_ERR(charger->edev)) {
+		dev_err_probe(charger->dev, PTR_ERR(charger->edev),
+			      "couldn't get extcon device: max8997-muic\n");
+		return PTR_ERR(charger->edev);
+	}
+
+	if (!IS_ERR(charger->reg) && !IS_ERR_OR_NULL(charger->edev)) {
+		ret = devm_work_autocancel(&pdev->dev, &charger->extcon_work,
+					   max8997_battery_extcon_evt_worker);
+		if (ret) {
+			dev_err(&pdev->dev, "failed to add extcon evt stop action: %d\n", ret);
+			return ret;
+		}
+		charger->extcon_nb.notifier_call = max8997_battery_extcon_evt;
+		ret = devm_extcon_register_notifier_all(&pdev->dev, charger->edev,
+							&charger->extcon_nb);
+		if (ret) {
+			dev_err(&pdev->dev, "failed to register extcon notifier\n");
+			return ret;
+		}
 	}
 
 	return 0;

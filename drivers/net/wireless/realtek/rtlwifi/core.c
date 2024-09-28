@@ -78,7 +78,6 @@ static void rtl_fw_do_work(const struct firmware *firmware, void *context,
 
 	rtl_dbg(rtlpriv, COMP_ERR, DBG_LOUD,
 		"Firmware callback routine entered!\n");
-	complete(&rtlpriv->firmware_loading_complete);
 	if (!firmware) {
 		if (rtlpriv->cfg->alt_fw_name) {
 			err = request_firmware(&firmware,
@@ -91,13 +90,13 @@ static void rtl_fw_do_work(const struct firmware *firmware, void *context,
 		}
 		pr_err("Selected firmware is not available\n");
 		rtlpriv->max_fw_size = 0;
-		return;
+		goto exit;
 	}
 found_alt:
 	if (firmware->size > rtlpriv->max_fw_size) {
 		pr_err("Firmware is too big!\n");
 		release_firmware(firmware);
-		return;
+		goto exit;
 	}
 	if (!is_wow) {
 		memcpy(rtlpriv->rtlhal.pfirmware, firmware->data,
@@ -109,6 +108,9 @@ found_alt:
 		rtlpriv->rtlhal.wowlan_fwsize = firmware->size;
 	}
 	release_firmware(firmware);
+
+exit:
+	complete(&rtlpriv->firmware_loading_complete);
 }
 
 void rtl_fw_cb(const struct firmware *firmware, void *context)
@@ -562,7 +564,7 @@ static int rtl_op_resume(struct ieee80211_hw *hw)
 	rtlhal->enter_pnp_sleep = false;
 	rtlhal->wake_from_pnp_sleep = true;
 
-	/* to resovle s4 can not wake up*/
+	/* to resolve s4 can not wake up*/
 	now = ktime_get_real_seconds();
 	if (now - rtlhal->last_suspend_sec < 5)
 		return -1;
@@ -804,7 +806,7 @@ static void rtl_op_configure_filter(struct ieee80211_hw *hw,
 	if (0 == changed_flags)
 		return;
 
-	/*TODO: we disable broadcase now, so enable here */
+	/*TODO: we disable broadcast now, so enable here */
 	if (changed_flags & FIF_ALLMULTI) {
 		if (*new_flags & FIF_ALLMULTI) {
 			mac->rx_conf |= rtlpriv->cfg->maps[MAC_RCR_AM] |
@@ -901,18 +903,18 @@ static int rtl_op_sta_add(struct ieee80211_hw *hw,
 		spin_unlock_bh(&rtlpriv->locks.entry_list_lock);
 		if (rtlhal->current_bandtype == BAND_ON_2_4G) {
 			sta_entry->wireless_mode = WIRELESS_MODE_G;
-			if (sta->supp_rates[0] <= 0xf)
+			if (sta->deflink.supp_rates[0] <= 0xf)
 				sta_entry->wireless_mode = WIRELESS_MODE_B;
-			if (sta->ht_cap.ht_supported)
+			if (sta->deflink.ht_cap.ht_supported)
 				sta_entry->wireless_mode = WIRELESS_MODE_N_24G;
 
 			if (vif->type == NL80211_IFTYPE_ADHOC)
 				sta_entry->wireless_mode = WIRELESS_MODE_G;
 		} else if (rtlhal->current_bandtype == BAND_ON_5G) {
 			sta_entry->wireless_mode = WIRELESS_MODE_A;
-			if (sta->ht_cap.ht_supported)
+			if (sta->deflink.ht_cap.ht_supported)
 				sta_entry->wireless_mode = WIRELESS_MODE_N_5G;
-			if (sta->vht_cap.vht_supported)
+			if (sta->deflink.vht_cap.vht_supported)
 				sta_entry->wireless_mode = WIRELESS_MODE_AC_5G;
 
 			if (vif->type == NL80211_IFTYPE_ADHOC)
@@ -920,7 +922,7 @@ static int rtl_op_sta_add(struct ieee80211_hw *hw,
 		}
 		/*disable cck rate for p2p*/
 		if (mac->p2p)
-			sta->supp_rates[0] &= 0xfffffff0;
+			sta->deflink.supp_rates[0] &= 0xfffffff0;
 
 		memcpy(sta_entry->mac_addr, sta->addr, ETH_ALEN);
 		rtl_dbg(rtlpriv, COMP_MAC80211, DBG_DMESG,
@@ -1016,6 +1018,25 @@ static void send_beacon_frame(struct ieee80211_hw *hw,
 	}
 }
 
+void rtl_update_beacon_work_callback(struct work_struct *work)
+{
+	struct rtl_works *rtlworks =
+	    container_of(work, struct rtl_works, update_beacon_work);
+	struct ieee80211_hw *hw = rtlworks->hw;
+	struct rtl_priv *rtlpriv = rtl_priv(hw);
+	struct ieee80211_vif *vif = rtlpriv->mac80211.vif;
+
+	if (!vif) {
+		WARN_ONCE(true, "no vif to update beacon\n");
+		return;
+	}
+
+	mutex_lock(&rtlpriv->locks.conf_mutex);
+	send_beacon_frame(hw, vif);
+	mutex_unlock(&rtlpriv->locks.conf_mutex);
+}
+EXPORT_SYMBOL_GPL(rtl_update_beacon_work_callback);
+
 static void rtl_op_bss_info_changed(struct ieee80211_hw *hw,
 				    struct ieee80211_vif *vif,
 				    struct ieee80211_bss_conf *bss_conf,
@@ -1105,7 +1126,7 @@ static void rtl_op_bss_info_changed(struct ieee80211_hw *hw,
 			rtl_dbg(rtlpriv, COMP_EASY_CONCURRENT, DBG_LOUD,
 				"send PS STATIC frame\n");
 			if (rtlpriv->dm.supp_phymode_switch) {
-				if (sta->ht_cap.ht_supported)
+				if (sta->deflink.ht_cap.ht_supported)
 					rtl_send_smps_action(hw, sta,
 							IEEE80211_SMPS_STATIC);
 			}
@@ -1113,20 +1134,20 @@ static void rtl_op_bss_info_changed(struct ieee80211_hw *hw,
 			if (rtlhal->current_bandtype == BAND_ON_5G) {
 				mac->mode = WIRELESS_MODE_A;
 			} else {
-				if (sta->supp_rates[0] <= 0xf)
+				if (sta->deflink.supp_rates[0] <= 0xf)
 					mac->mode = WIRELESS_MODE_B;
 				else
 					mac->mode = WIRELESS_MODE_G;
 			}
 
-			if (sta->ht_cap.ht_supported) {
+			if (sta->deflink.ht_cap.ht_supported) {
 				if (rtlhal->current_bandtype == BAND_ON_2_4G)
 					mac->mode = WIRELESS_MODE_N_24G;
 				else
 					mac->mode = WIRELESS_MODE_N_5G;
 			}
 
-			if (sta->vht_cap.vht_supported) {
+			if (sta->deflink.vht_cap.vht_supported) {
 				if (rtlhal->current_bandtype == BAND_ON_5G)
 					mac->mode = WIRELESS_MODE_AC_5G;
 				else
@@ -1235,14 +1256,14 @@ static void rtl_op_bss_info_changed(struct ieee80211_hw *hw,
 		rcu_read_lock();
 		sta = ieee80211_find_sta(vif, (u8 *)bss_conf->bssid);
 		if (sta) {
-			if (sta->ht_cap.ampdu_density >
+			if (sta->deflink.ht_cap.ampdu_density >
 			    mac->current_ampdu_density)
 				mac->current_ampdu_density =
-				    sta->ht_cap.ampdu_density;
-			if (sta->ht_cap.ampdu_factor <
+				    sta->deflink.ht_cap.ampdu_density;
+			if (sta->deflink.ht_cap.ampdu_factor <
 			    mac->current_ampdu_factor)
 				mac->current_ampdu_factor =
-				    sta->ht_cap.ampdu_factor;
+				    sta->deflink.ht_cap.ampdu_factor;
 		}
 		rcu_read_unlock();
 
@@ -1277,20 +1298,20 @@ static void rtl_op_bss_info_changed(struct ieee80211_hw *hw,
 		if (rtlhal->current_bandtype == BAND_ON_5G) {
 			mac->mode = WIRELESS_MODE_A;
 		} else {
-			if (sta->supp_rates[0] <= 0xf)
+			if (sta->deflink.supp_rates[0] <= 0xf)
 				mac->mode = WIRELESS_MODE_B;
 			else
 				mac->mode = WIRELESS_MODE_G;
 		}
 
-		if (sta->ht_cap.ht_supported) {
+		if (sta->deflink.ht_cap.ht_supported) {
 			if (rtlhal->current_bandtype == BAND_ON_2_4G)
 				mac->mode = WIRELESS_MODE_N_24G;
 			else
 				mac->mode = WIRELESS_MODE_N_5G;
 		}
 
-		if (sta->vht_cap.vht_supported) {
+		if (sta->deflink.vht_cap.vht_supported) {
 			if (rtlhal->current_bandtype == BAND_ON_5G)
 				mac->mode = WIRELESS_MODE_AC_5G;
 			else
@@ -1306,7 +1327,7 @@ static void rtl_op_bss_info_changed(struct ieee80211_hw *hw,
 			sta_entry->wireless_mode = mac->mode;
 		}
 
-		if (sta->ht_cap.ht_supported) {
+		if (sta->deflink.ht_cap.ht_supported) {
 			mac->ht_enable = true;
 
 			/*
@@ -1317,16 +1338,16 @@ static void rtl_op_bss_info_changed(struct ieee80211_hw *hw,
 			 * */
 		}
 
-		if (sta->vht_cap.vht_supported)
+		if (sta->deflink.vht_cap.vht_supported)
 			mac->vht_enable = true;
 
 		if (changed & BSS_CHANGED_BASIC_RATES) {
 			/* for 5G must << RATE_6M_INDEX = 4,
 			 * because 5G have no cck rate*/
 			if (rtlhal->current_bandtype == BAND_ON_5G)
-				basic_rates = sta->supp_rates[1] << 4;
+				basic_rates = sta->deflink.supp_rates[1] << 4;
 			else
-				basic_rates = sta->supp_rates[0];
+				basic_rates = sta->deflink.supp_rates[0];
 
 			mac->basic_rates = basic_rates;
 			rtlpriv->cfg->ops->set_hw_reg(hw, HW_VAR_BASIC_RATE,
@@ -1745,6 +1766,18 @@ static void rtl_op_flush(struct ieee80211_hw *hw,
 		rtlpriv->intf_ops->flush(hw, queues, drop);
 }
 
+static int rtl_op_set_tim(struct ieee80211_hw *hw, struct ieee80211_sta *sta,
+			  bool set)
+{
+	struct rtl_priv *rtlpriv = rtl_priv(hw);
+	struct rtl_hal *rtlhal = rtl_hal(rtl_priv(hw));
+
+	if (rtlhal->hw_type == HARDWARE_TYPE_RTL8192CU)
+		schedule_work(&rtlpriv->works.update_beacon_work);
+
+	return 0;
+}
+
 /*	Description:
  *		This routine deals with the Power Configuration CMD
  *		 parsing for RTL8723/RTL8188E Series IC.
@@ -1794,7 +1827,7 @@ bool rtl_hal_pwrseqcmdparsing(struct rtl_priv *rtlpriv, u8 cut_version,
 				value |= (GET_PWR_CFG_VALUE(cfg_cmd) &
 					  GET_PWR_CFG_MASK(cfg_cmd));
 
-				/*Write the value back to sytem register*/
+				/*Write the value back to system register*/
 				rtl_write_byte(rtlpriv, offset, value);
 				break;
 			case PWR_CMD_POLLING:
@@ -1901,6 +1934,7 @@ const struct ieee80211_ops rtl_ops = {
 	.sta_add = rtl_op_sta_add,
 	.sta_remove = rtl_op_sta_remove,
 	.flush = rtl_op_flush,
+	.set_tim = rtl_op_set_tim,
 };
 EXPORT_SYMBOL_GPL(rtl_ops);
 

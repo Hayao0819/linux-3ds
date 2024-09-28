@@ -51,7 +51,7 @@ RE_typedef = re.compile(r'\b(typedef)\s+([a-zA-Z_]\w+)', flags=ascii_p3)
 # Detects a reference to a documentation page of the form Documentation/... with
 # an optional extension
 #
-RE_doc = re.compile(r'\bDocumentation(/[\w\-_/]+)(\.\w+)*')
+RE_doc = re.compile(r'(\bDocumentation/)?((\.\./)*[\w\-/]+)\.(rst|txt)')
 
 RE_namespace = re.compile(r'^\s*..\s*c:namespace::\s*(\S+)\s*$')
 
@@ -234,7 +234,10 @@ def markup_doc_ref(docname, app, match):
     #
     # Go through the dance of getting an xref out of the std domain
     #
-    target = match.group(1)
+    absolute = match.group(1)
+    target = match.group(2)
+    if absolute:
+       target = "/" + target
     xref = None
     pxref = addnodes.pending_xref('', refdomain = 'std', reftype = 'doc',
                                   reftarget = target, modname = None,
@@ -268,19 +271,30 @@ def get_c_namespace(app, docname):
 def auto_markup(app, doctree, name):
     global c_namespace
     c_namespace = get_c_namespace(app, name)
+    def text_but_not_a_reference(node):
+        # The nodes.literal test catches ``literal text``, its purpose is to
+        # avoid adding cross-references to functions that have been explicitly
+        # marked with cc:func:.
+        if not isinstance(node, nodes.Text) or isinstance(node.parent, nodes.literal):
+            return False
+
+        child_of_reference = False
+        parent = node.parent
+        while parent:
+            if isinstance(parent, nodes.Referential):
+                child_of_reference = True
+                break
+            parent = parent.parent
+        return not child_of_reference
+
     #
     # This loop could eventually be improved on.  Someday maybe we
     # want a proper tree traversal with a lot of awareness of which
     # kinds of nodes to prune.  But this works well for now.
     #
-    # The nodes.literal test catches ``literal text``, its purpose is to
-    # avoid adding cross-references to functions that have been explicitly
-    # marked with cc:func:.
-    #
     for para in doctree.traverse(nodes.paragraph):
-        for node in para.traverse(nodes.Text):
-            if not isinstance(node.parent, nodes.literal):
-                node.parent.replace(node, markup_refs(name, app, node))
+        for node in para.traverse(condition=text_but_not_a_reference):
+            node.parent.replace(node, markup_refs(name, app, node))
 
 def setup(app):
     app.connect('doctree-resolved', auto_markup)

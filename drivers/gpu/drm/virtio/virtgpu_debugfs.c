@@ -23,19 +23,20 @@
  * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
+#include <linux/string_helpers.h>
+
 #include <drm/drm_debugfs.h>
 #include <drm/drm_file.h>
 
 #include "virtgpu_drv.h"
 
-static void virtio_add_bool(struct seq_file *m, const char *name,
-				    bool value)
+static void virtio_gpu_add_bool(struct seq_file *m, const char *name,
+				bool value)
 {
-	seq_printf(m, "%-16s : %s\n", name, value ? "yes" : "no");
+	seq_printf(m, "%-16s : %s\n", name, str_yes_no(value));
 }
 
-static void virtio_add_int(struct seq_file *m, const char *name,
-				   int value)
+static void virtio_gpu_add_int(struct seq_file *m, const char *name, int value)
 {
 	seq_printf(m, "%-16s : %d\n", name, value);
 }
@@ -45,13 +46,17 @@ static int virtio_gpu_features(struct seq_file *m, void *data)
 	struct drm_info_node *node = (struct drm_info_node *)m->private;
 	struct virtio_gpu_device *vgdev = node->minor->dev->dev_private;
 
-	virtio_add_bool(m, "virgl", vgdev->has_virgl_3d);
-	virtio_add_bool(m, "edid", vgdev->has_edid);
-	virtio_add_bool(m, "indirect", vgdev->has_indirect);
-	virtio_add_bool(m, "resource uuid", vgdev->has_resource_assign_uuid);
-	virtio_add_bool(m, "blob resources", vgdev->has_resource_blob);
-	virtio_add_int(m, "cap sets", vgdev->num_capsets);
-	virtio_add_int(m, "scanouts", vgdev->num_scanouts);
+	virtio_gpu_add_bool(m, "virgl", vgdev->has_virgl_3d);
+	virtio_gpu_add_bool(m, "edid", vgdev->has_edid);
+	virtio_gpu_add_bool(m, "indirect", vgdev->has_indirect);
+
+	virtio_gpu_add_bool(m, "resource uuid",
+			    vgdev->has_resource_assign_uuid);
+
+	virtio_gpu_add_bool(m, "blob resources", vgdev->has_resource_blob);
+	virtio_gpu_add_bool(m, "context init", vgdev->has_context_init);
+	virtio_gpu_add_int(m, "cap sets", vgdev->num_capsets);
+	virtio_gpu_add_int(m, "scanouts", vgdev->num_scanouts);
 	if (vgdev->host_visible_region.len) {
 		seq_printf(m, "%-16s : 0x%lx +0x%lx\n", "host visible region",
 			   (unsigned long)vgdev->host_visible_region.addr,

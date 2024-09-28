@@ -37,7 +37,7 @@
 __visible int plugin_is_GPL_compatible;
 
 static struct plugin_info structleak_plugin_info = {
-	.version	= "20190125vanilla",
+	.version	= PLUGIN_VERSION,
 	.help		= "disable\tdo not activate plugin\n"
 			  "byref\tinit structs passed by reference\n"
 			  "byref-all\tinit anything passed by reference\n"
@@ -103,10 +103,8 @@ static void finish_type(void *event_data, void *data)
 	if (type == NULL_TREE || type == error_mark_node)
 		return;
 
-#if BUILDING_GCC_VERSION >= 5000
 	if (TREE_CODE(type) == ENUMERAL_TYPE)
 		return;
-#endif
 
 	if (TYPE_USERSPACE(type))
 		return;
@@ -170,7 +168,6 @@ static void initialize(tree var)
 static unsigned int structleak_execute(void)
 {
 	basic_block bb;
-	unsigned int ret = 0;
 	tree var;
 	unsigned int i;
 
@@ -200,7 +197,7 @@ static unsigned int structleak_execute(void)
 			initialize(var);
 	}
 
-	return ret;
+	return 0;
 }
 
 #define PASS_NAME structleak

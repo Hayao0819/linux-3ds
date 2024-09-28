@@ -257,8 +257,8 @@ static void cc_cipher_exit(struct crypto_tfm *tfm)
 		&ctx_p->user.key_dma_addr);
 
 	/* Free key buffer in context */
-	kfree_sensitive(ctx_p->user.key);
 	dev_dbg(dev, "Free key buffer in context. key=@%p\n", ctx_p->user.key);
+	kfree_sensitive(ctx_p->user.key);
 }
 
 struct tdes_keys {
@@ -921,7 +921,7 @@ static int cc_cipher_process(struct skcipher_request *req,
 			return crypto_skcipher_decrypt(subreq);
 	}
 
-	/* The IV we are handed may be allocted from the stack so
+	/* The IV we are handed may be allocated from the stack so
 	 * we must copy it to a DMAable buffer before use.
 	 */
 	req_ctx->iv = kmemdup(iv, ivsize, flags);

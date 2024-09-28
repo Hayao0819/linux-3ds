@@ -42,7 +42,6 @@ properties:
     const: 1
 
   ti,channel0-current-microamp:
-    $ref: /schemas/types.yaml#/definitions/uint32
     description: Channel 0 current in uA.
     enum:
       - 0
@@ -51,7 +50,6 @@ properties:
       - 20
 
   ti,channel3-current-microamp:
-    $ref: /schemas/types.yaml#/definitions/uint32
     description: Channel 3 current in uA.
     enum:
       - 0
@@ -76,9 +74,9 @@ examples:
         compatible = "ti,twl6035-pmic", "ti,palmas-pmic";
         adc {
             compatible = "ti,palmas-gpadc";
-            interrupts = <18 0
-                          16 0
-                          17 0>;
+            interrupts = <18 0>,
+                         <16 0>,
+                         <17 0>;
             #io-channel-cells = <1>;
             ti,channel0-current-microamp = <5>;
             ti,channel3-current-microamp = <10>;

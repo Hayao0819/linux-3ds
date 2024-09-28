@@ -16,20 +16,18 @@ struct nouveau_sgdma_be {
 };
 
 void
-nouveau_sgdma_destroy(struct ttm_bo_device *bdev, struct ttm_tt *ttm)
+nouveau_sgdma_destroy(struct ttm_device *bdev, struct ttm_tt *ttm)
 {
 	struct nouveau_sgdma_be *nvbe = (struct nouveau_sgdma_be *)ttm;
 
 	if (ttm) {
-		nouveau_sgdma_unbind(bdev, ttm);
-		ttm_tt_destroy_common(bdev, ttm);
 		ttm_tt_fini(&nvbe->ttm);
 		kfree(nvbe);
 	}
 }
 
 int
-nouveau_sgdma_bind(struct ttm_bo_device *bdev, struct ttm_tt *ttm, struct ttm_resource *reg)
+nouveau_sgdma_bind(struct ttm_device *bdev, struct ttm_tt *ttm, struct ttm_resource *reg)
 {
 	struct nouveau_sgdma_be *nvbe = (struct nouveau_sgdma_be *)ttm;
 	struct nouveau_drm *drm = nouveau_bdev(bdev);
@@ -56,7 +54,7 @@ nouveau_sgdma_bind(struct ttm_bo_device *bdev, struct ttm_tt *ttm, struct ttm_re
 }
 
 void
-nouveau_sgdma_unbind(struct ttm_bo_device *bdev, struct ttm_tt *ttm)
+nouveau_sgdma_unbind(struct ttm_device *bdev, struct ttm_tt *ttm)
 {
 	struct nouveau_sgdma_be *nvbe = (struct nouveau_sgdma_be *)ttm;
 	if (nvbe->mem) {
@@ -84,7 +82,7 @@ nouveau_sgdma_create_ttm(struct ttm_buffer_object *bo, uint32_t page_flags)
 	if (!nvbe)
 		return NULL;
 
-	if (ttm_dma_tt_init(&nvbe->ttm, bo, page_flags, caching)) {
+	if (ttm_sg_tt_init(&nvbe->ttm, bo, page_flags, caching)) {
 		kfree(nvbe);
 		return NULL;
 	}

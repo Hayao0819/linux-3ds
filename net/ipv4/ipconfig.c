@@ -61,7 +61,6 @@
 #include <linux/export.h>
 #include <net/net_namespace.h>
 #include <net/arp.h>
-#include <net/dsa.h>
 #include <net/ip.h>
 #include <net/ipconfig.h>
 #include <net/route.h>
@@ -218,9 +217,9 @@ static int __init ic_open_devs(void)
 	last = &ic_first_dev;
 	rtnl_lock();
 
-	/* bring loopback and DSA master network devices up first */
+	/* bring loopback device up first */
 	for_each_netdev(&init_net, dev) {
-		if (!(dev->flags & IFF_LOOPBACK) && !netdev_uses_dsa(dev))
+		if (!(dev->flags & IFF_LOOPBACK))
 			continue;
 		if (dev_change_flags(dev, dev->flags | IFF_UP, NULL) < 0)
 			pr_err("IP-Config: Failed to open %s\n", dev->name);
@@ -263,6 +262,11 @@ static int __init ic_open_devs(void)
 				 dev->name, able, d->xid);
 		}
 	}
+	/* Devices with a complex topology like SFP ethernet interfaces needs
+	 * the rtnl_lock at init. The carrier wait-loop must therefore run
+	 * without holding it.
+	 */
+	rtnl_unlock();
 
 	/* no point in waiting if we could not bring up at least one device */
 	if (!ic_first_dev)
@@ -275,9 +279,13 @@ static int __init ic_open_devs(void)
 			   msecs_to_jiffies(carrier_timeout * 1000))) {
 		int wait, elapsed;
 
+		rtnl_lock();
 		for_each_netdev(&init_net, dev)
-			if (ic_is_init_dev(dev) && netif_carrier_ok(dev))
+			if (ic_is_init_dev(dev) && netif_carrier_ok(dev)) {
+				rtnl_unlock();
 				goto have_carrier;
+			}
+		rtnl_unlock();
 
 		msleep(1);
 
@@ -290,7 +298,6 @@ static int __init ic_open_devs(void)
 		next_msg = jiffies + msecs_to_jiffies(20000);
 	}
 have_carrier:
-	rtnl_unlock();
 
 	*last = NULL;
 
@@ -305,17 +312,34 @@ have_carrier:
 	return 0;
 }
 
+/* Close all network interfaces except the one we've autoconfigured, and its
+ * lowers, in case it's a stacked virtual interface.
+ */
 static void __init ic_close_devs(void)
 {
+	struct net_device *selected_dev = ic_dev ? ic_dev->dev : NULL;
 	struct ic_device *d, *next;
 	struct net_device *dev;
 
 	rtnl_lock();
 	next = ic_first_dev;
 	while ((d = next)) {
+		bool bring_down = (d != ic_dev);
+		struct net_device *lower;
+		struct list_head *iter;
+
 		next = d->next;
 		dev = d->dev;
-		if (d != ic_dev && !netdev_uses_dsa(dev)) {
+
+		if (selected_dev) {
+			netdev_for_each_lower_dev(selected_dev, lower, iter) {
+				if (dev == lower) {
+					bring_down = false;
+					break;
+				}
+			}
+		}
+		if (bring_down) {
 			pr_debug("IP-Config: Downing %s\n", dev->name);
 			dev_change_flags(dev, d->flags, NULL);
 		}
@@ -870,7 +894,7 @@ static void __init ic_bootp_send_if(struct ic_device *d, unsigned long jiffies_d
 
 
 /*
- *  Copy BOOTP-supplied string if not already set.
+ *  Copy BOOTP-supplied string
  */
 static int __init ic_bootp_string(char *dest, char *src, int len, int max)
 {
@@ -919,12 +943,15 @@ static void __init ic_do_bootp_ext(u8 *ext)
 		}
 		break;
 	case 12:	/* Host name */
-		ic_bootp_string(utsname()->nodename, ext+1, *ext,
-				__NEW_UTS_LEN);
-		ic_host_name_set = 1;
+		if (!ic_host_name_set) {
+			ic_bootp_string(utsname()->nodename, ext+1, *ext,
+					__NEW_UTS_LEN);
+			ic_host_name_set = 1;
+		}
 		break;
 	case 15:	/* Domain name (DNS) */
-		ic_bootp_string(ic_domain, ext+1, *ext, sizeof(ic_domain));
+		if (!ic_domain[0])
+			ic_bootp_string(ic_domain, ext+1, *ext, sizeof(ic_domain));
 		break;
 	case 17:	/* Root path */
 		if (!root_server_path[0])

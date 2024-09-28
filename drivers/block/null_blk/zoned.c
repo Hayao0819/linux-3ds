@@ -6,7 +6,13 @@
 #define CREATE_TRACE_POINTS
 #include "trace.h"
 
-#define MB_TO_SECTS(mb) (((sector_t)mb * SZ_1M) >> SECTOR_SHIFT)
+#undef pr_fmt
+#define pr_fmt(fmt)	"null_blk: " fmt
+
+static inline sector_t mb_to_sects(unsigned long mb)
+{
+	return ((sector_t)mb * SZ_1M) >> SECTOR_SHIFT;
+}
 
 static inline unsigned int null_zone_no(struct nullb_device *dev, sector_t sect)
 {
@@ -72,17 +78,16 @@ int null_init_zoned_dev(struct nullb_device *dev, struct request_queue *q)
 		dev->zone_capacity = dev->zone_size;
 
 	if (dev->zone_capacity > dev->zone_size) {
-		pr_err("null_blk: zone capacity (%lu MB) larger than zone size (%lu MB)\n",
-					dev->zone_capacity, dev->zone_size);
+		pr_err("zone capacity (%lu MB) larger than zone size (%lu MB)\n",
+		       dev->zone_capacity, dev->zone_size);
 		return -EINVAL;
 	}
 
-	zone_capacity_sects = MB_TO_SECTS(dev->zone_capacity);
-	dev_capacity_sects = MB_TO_SECTS(dev->size);
-	dev->zone_size_sects = MB_TO_SECTS(dev->zone_size);
-	dev->nr_zones = dev_capacity_sects >> ilog2(dev->zone_size_sects);
-	if (dev_capacity_sects & (dev->zone_size_sects - 1))
-		dev->nr_zones++;
+	zone_capacity_sects = mb_to_sects(dev->zone_capacity);
+	dev_capacity_sects = mb_to_sects(dev->size);
+	dev->zone_size_sects = mb_to_sects(dev->zone_size);
+	dev->nr_zones = round_up(dev_capacity_sects, dev->zone_size_sects)
+		>> ilog2(dev->zone_size_sects);
 
 	dev->zones = kvmalloc_array(dev->nr_zones, sizeof(struct nullb_zone),
 				    GFP_KERNEL | __GFP_ZERO);
@@ -146,10 +151,6 @@ int null_init_zoned_dev(struct nullb_device *dev, struct request_queue *q)
 		sector += dev->zone_size_sects;
 	}
 
-	q->limits.zoned = BLK_ZONED_HM;
-	blk_queue_flag_set(QUEUE_FLAG_ZONE_RESETALL, q);
-	blk_queue_required_elevator_features(q, ELEVATOR_F_ZBD_SEQ_WRITE);
-
 	return 0;
 }
 
@@ -157,6 +158,10 @@ int null_register_zoned_dev(struct nullb *nullb)
 {
 	struct nullb_device *dev = nullb->dev;
 	struct request_queue *q = nullb->q;
+
+	blk_queue_set_zoned(nullb->disk, BLK_ZONED_HM);
+	blk_queue_flag_set(QUEUE_FLAG_ZONE_RESETALL, q);
+	blk_queue_required_elevator_features(q, ELEVATOR_F_ZBD_SEQ_WRITE);
 
 	if (queue_is_mq(q)) {
 		int ret = blk_revalidate_disk_zones(nullb->disk, NULL);
@@ -178,6 +183,7 @@ int null_register_zoned_dev(struct nullb *nullb)
 void null_free_zoned_dev(struct nullb_device *dev)
 {
 	kvfree(dev->zones);
+	dev->zones = NULL;
 }
 
 int null_report_zones(struct gendisk *disk, sector_t sector,
@@ -392,10 +398,10 @@ static blk_status_t null_zone_write(struct nullb_cmd *cmd, sector_t sector,
 	 */
 	if (append) {
 		sector = zone->wp;
-		if (cmd->bio)
-			cmd->bio->bi_iter.bi_sector = sector;
-		else
+		if (dev->queue_mode == NULL_Q_MQ)
 			cmd->rq->__sector = sector;
+		else
+			cmd->bio->bi_iter.bi_sector = sector;
 	} else if (sector != zone->wp) {
 		ret = BLK_STS_IOERR;
 		goto unlock;

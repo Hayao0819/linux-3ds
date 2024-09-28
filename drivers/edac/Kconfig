@@ -55,6 +55,7 @@ config EDAC_DECODE_MCE
 config EDAC_GHES
 	bool "Output ACPI APEI/GHES BIOS detected errors via EDAC"
 	depends on ACPI_APEI_GHES && (EDAC=y)
+	select UEFI_CPER
 	help
 	  Not all machines support hardware-driven error report. Some of those
 	  provide a BIOS-driven error report mechanism via ACPI, using the
@@ -81,14 +82,13 @@ config EDAC_AMD64
 	  Support for error detection and correction of DRAM ECC errors on
 	  the AMD64 families (>= K8) of memory controllers.
 
-config EDAC_AMD64_ERROR_INJECTION
-	bool "Sysfs HW Error injection facilities"
-	depends on EDAC_AMD64
-	help
-	  Recent Opterons (Family 10h and later) provide for Memory Error
-	  Injection into the ECC detection circuits. The amd64_edac module
-	  allows the operator/user to inject Uncorrectable and Correctable
-	  errors into DRAM.
+	  When EDAC_DEBUG is enabled, hardware error injection facilities
+	  through sysfs are available:
+
+	  AMD CPUs up to and excluding family 0x17 provide for Memory
+	  Error Injection into the ECC detection circuits. The amd64_edac
+	  module allows the operator/user to inject Uncorrectable and
+	  Correctable errors into DRAM.
 
 	  When enabled, in each of the respective memory controller directories
 	  (/sys/devices/system/edac/mc/mcX), there are 3 input files:
@@ -271,7 +271,8 @@ config EDAC_PND2
 
 config EDAC_IGEN6
 	tristate "Intel client SoC Integrated MC"
-	depends on PCI && X86_64 && PCI_MMCONFIG && ARCH_HAVE_NMI_SAFE_CMPXCHG
+	depends on PCI && PCI_MMCONFIG && ARCH_HAVE_NMI_SAFE_CMPXCHG
+	depends on X86_64 && X86_MCE_INTEL
 	help
 	  Support for error detection and correction on the Intel
 	  client SoC Integrated Memory Controller using In-Band ECC IP.
@@ -397,7 +398,7 @@ config EDAC_THUNDERX
 
 config EDAC_ALTERA
 	bool "Altera SOCFPGA ECC"
-	depends on EDAC=y && (ARCH_SOCFPGA || ARCH_STRATIX10)
+	depends on EDAC=y && ARCH_INTEL_SOCFPGA
 	help
 	  Support for error detection and correction on the
 	  Altera SOCs. This is the global enable for the
@@ -484,7 +485,7 @@ config EDAC_ARMADA_XP
 
 config EDAC_SYNOPSYS
 	tristate "Synopsys DDR Memory Controller"
-	depends on ARCH_ZYNQ || ARCH_ZYNQMP
+	depends on ARCH_ZYNQ || ARCH_ZYNQMP || ARCH_INTEL_SOCFPGA || ARCH_MXC
 	help
 	  Support for error detection and correction on the Synopsys DDR
 	  memory controller.

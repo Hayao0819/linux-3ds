@@ -34,7 +34,7 @@ static int fc_bsg_hostadd(struct Scsi_Host *, struct fc_host_attrs *);
 static int fc_bsg_rportadd(struct Scsi_Host *, struct fc_rport *);
 static void fc_bsg_remove(struct request_queue *);
 static void fc_bsg_goose_queue(struct fc_rport *);
-static void fc_li_stats_update(struct fc_fn_li_desc *li_desc,
+static void fc_li_stats_update(u16 event_type,
 			       struct fc_fpin_stats *stats);
 static void fc_delivery_stats_update(u32 reason_code,
 				     struct fc_fpin_stats *stats);
@@ -148,20 +148,23 @@ fc_enum_name_search(host_event_code, fc_host_event_code,
 static struct {
 	enum fc_port_state	value;
 	char			*name;
+	int			matchlen;
 } fc_port_state_names[] = {
-	{ FC_PORTSTATE_UNKNOWN,		"Unknown" },
-	{ FC_PORTSTATE_NOTPRESENT,	"Not Present" },
-	{ FC_PORTSTATE_ONLINE,		"Online" },
-	{ FC_PORTSTATE_OFFLINE,		"Offline" },
-	{ FC_PORTSTATE_BLOCKED,		"Blocked" },
-	{ FC_PORTSTATE_BYPASSED,	"Bypassed" },
-	{ FC_PORTSTATE_DIAGNOSTICS,	"Diagnostics" },
-	{ FC_PORTSTATE_LINKDOWN,	"Linkdown" },
-	{ FC_PORTSTATE_ERROR,		"Error" },
-	{ FC_PORTSTATE_LOOPBACK,	"Loopback" },
-	{ FC_PORTSTATE_DELETED,		"Deleted" },
+	{ FC_PORTSTATE_UNKNOWN,		"Unknown", 7},
+	{ FC_PORTSTATE_NOTPRESENT,	"Not Present", 11 },
+	{ FC_PORTSTATE_ONLINE,		"Online", 6 },
+	{ FC_PORTSTATE_OFFLINE,		"Offline", 7 },
+	{ FC_PORTSTATE_BLOCKED,		"Blocked", 7 },
+	{ FC_PORTSTATE_BYPASSED,	"Bypassed", 8 },
+	{ FC_PORTSTATE_DIAGNOSTICS,	"Diagnostics", 11 },
+	{ FC_PORTSTATE_LINKDOWN,	"Linkdown", 8 },
+	{ FC_PORTSTATE_ERROR,		"Error", 5 },
+	{ FC_PORTSTATE_LOOPBACK,	"Loopback", 8 },
+	{ FC_PORTSTATE_DELETED,		"Deleted", 7 },
+	{ FC_PORTSTATE_MARGINAL,	"Marginal", 8 },
 };
 fc_enum_name_search(port_state, fc_port_state, fc_port_state_names)
+fc_enum_name_match(port_state, fc_port_state, fc_port_state_names)
 #define FC_PORTSTATE_MAX_NAMELEN	20
 
 
@@ -667,42 +670,34 @@ fc_find_rport_by_wwpn(struct Scsi_Host *shost, u64 wwpn)
 EXPORT_SYMBOL(fc_find_rport_by_wwpn);
 
 static void
-fc_li_stats_update(struct fc_fn_li_desc *li_desc,
+fc_li_stats_update(u16 event_type,
 		   struct fc_fpin_stats *stats)
 {
-	stats->li += be32_to_cpu(li_desc->event_count);
-	switch (be16_to_cpu(li_desc->event_type)) {
+	stats->li++;
+	switch (event_type) {
 	case FPIN_LI_UNKNOWN:
-		stats->li_failure_unknown +=
-		    be32_to_cpu(li_desc->event_count);
+		stats->li_failure_unknown++;
 		break;
 	case FPIN_LI_LINK_FAILURE:
-		stats->li_link_failure_count +=
-		    be32_to_cpu(li_desc->event_count);
+		stats->li_link_failure_count++;
 		break;
 	case FPIN_LI_LOSS_OF_SYNC:
-		stats->li_loss_of_sync_count +=
-		    be32_to_cpu(li_desc->event_count);
+		stats->li_loss_of_sync_count++;
 		break;
 	case FPIN_LI_LOSS_OF_SIG:
-		stats->li_loss_of_signals_count +=
-		    be32_to_cpu(li_desc->event_count);
+		stats->li_loss_of_signals_count++;
 		break;
 	case FPIN_LI_PRIM_SEQ_ERR:
-		stats->li_prim_seq_err_count +=
-		    be32_to_cpu(li_desc->event_count);
+		stats->li_prim_seq_err_count++;
 		break;
 	case FPIN_LI_INVALID_TX_WD:
-		stats->li_invalid_tx_word_count +=
-		    be32_to_cpu(li_desc->event_count);
+		stats->li_invalid_tx_word_count++;
 		break;
 	case FPIN_LI_INVALID_CRC:
-		stats->li_invalid_crc_count +=
-		    be32_to_cpu(li_desc->event_count);
+		stats->li_invalid_crc_count++;
 		break;
 	case FPIN_LI_DEVICE_SPEC:
-		stats->li_device_specific +=
-		    be32_to_cpu(li_desc->event_count);
+		stats->li_device_specific++;
 		break;
 	}
 }
@@ -764,6 +759,7 @@ fc_fpin_li_stats_update(struct Scsi_Host *shost, struct fc_tlv_desc *tlv)
 	struct fc_rport *attach_rport = NULL;
 	struct fc_host_attrs *fc_host = shost_to_fc_host(shost);
 	struct fc_fn_li_desc *li_desc = (struct fc_fn_li_desc *)tlv;
+	u16 event_type = be16_to_cpu(li_desc->event_type);
 	u64 wwpn;
 
 	rport = fc_find_rport_by_wwpn(shost,
@@ -772,7 +768,7 @@ fc_fpin_li_stats_update(struct Scsi_Host *shost, struct fc_tlv_desc *tlv)
 	    (rport->roles & FC_PORT_ROLE_FCP_TARGET ||
 	     rport->roles & FC_PORT_ROLE_NVME_TARGET)) {
 		attach_rport = rport;
-		fc_li_stats_update(li_desc, &attach_rport->fpin_stats);
+		fc_li_stats_update(event_type, &attach_rport->fpin_stats);
 	}
 
 	if (be32_to_cpu(li_desc->pname_count) > 0) {
@@ -786,14 +782,14 @@ fc_fpin_li_stats_update(struct Scsi_Host *shost, struct fc_tlv_desc *tlv)
 			    rport->roles & FC_PORT_ROLE_NVME_TARGET)) {
 				if (rport == attach_rport)
 					continue;
-				fc_li_stats_update(li_desc,
+				fc_li_stats_update(event_type,
 						   &rport->fpin_stats);
 			}
 		}
 	}
 
 	if (fc_host->port_name == be64_to_cpu(li_desc->attached_wwpn))
-		fc_li_stats_update(li_desc, &fc_host->fpin_stats);
+		fc_li_stats_update(event_type, &fc_host->fpin_stats);
 }
 
 /*
@@ -1235,7 +1231,59 @@ show_fc_rport_roles (struct device *dev, struct device_attribute *attr,
 static FC_DEVICE_ATTR(rport, roles, S_IRUGO,
 		show_fc_rport_roles, NULL);
 
-fc_private_rport_rd_enum_attr(port_state, FC_PORTSTATE_MAX_NAMELEN);
+static ssize_t fc_rport_set_marginal_state(struct device *dev,
+						struct device_attribute *attr,
+						const char *buf, size_t count)
+{
+	struct fc_rport *rport = transport_class_to_rport(dev);
+	enum fc_port_state port_state;
+	int ret = 0;
+
+	ret = get_fc_port_state_match(buf, &port_state);
+	if (ret)
+		return -EINVAL;
+	if (port_state == FC_PORTSTATE_MARGINAL) {
+		/*
+		 * Change the state to Marginal only if the
+		 * current rport state is Online
+		 * Allow only Online->Marginal
+		 */
+		if (rport->port_state == FC_PORTSTATE_ONLINE)
+			rport->port_state = port_state;
+		else
+			return -EINVAL;
+	} else if (port_state == FC_PORTSTATE_ONLINE) {
+		/*
+		 * Change the state to Online only if the
+		 * current rport state is Marginal
+		 * Allow only Marginal->Online
+		 */
+		if (rport->port_state == FC_PORTSTATE_MARGINAL)
+			rport->port_state = port_state;
+		else
+			return -EINVAL;
+	} else
+		return -EINVAL;
+	return count;
+}
+
+static ssize_t
+show_fc_rport_port_state(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	const char *name;
+	struct fc_rport *rport = transport_class_to_rport(dev);
+
+	name = get_fc_port_state_name(rport->port_state);
+	if (!name)
+		return -EINVAL;
+
+	return snprintf(buf, 20, "%s\n", name);
+}
+
+static FC_DEVICE_ATTR(rport, port_state, 0444 | 0200,
+			show_fc_rport_port_state, fc_rport_set_marginal_state);
+
 fc_private_rport_rd_attr(scsi_target_id, "%d\n", 20);
 
 /*
@@ -1631,7 +1679,7 @@ store_fc_vport_delete(struct device *dev, struct device_attribute *attr,
 	unsigned long flags;
 
 	spin_lock_irqsave(shost->host_lock, flags);
-	if (vport->flags & (FC_VPORT_DEL | FC_VPORT_CREATING | FC_VPORT_DELETING)) {
+	if (vport->flags & (FC_VPORT_DEL | FC_VPORT_CREATING)) {
 		spin_unlock_irqrestore(shost->host_lock, flags);
 		return -EBUSY;
 	}
@@ -2509,7 +2557,8 @@ fc_user_scan_tgt(struct Scsi_Host *shost, uint channel, uint id, u64 lun)
 		if (rport->scsi_target_id == -1)
 			continue;
 
-		if (rport->port_state != FC_PORTSTATE_ONLINE)
+		if ((rport->port_state != FC_PORTSTATE_ONLINE) &&
+			(rport->port_state != FC_PORTSTATE_MARGINAL))
 			continue;
 
 		if ((channel == rport->channel) &&
@@ -2677,7 +2726,7 @@ fc_attach_transport(struct fc_function_template *ft)
 	SETUP_PRIVATE_RPORT_ATTRIBUTE_RD(port_name);
 	SETUP_PRIVATE_RPORT_ATTRIBUTE_RD(port_id);
 	SETUP_PRIVATE_RPORT_ATTRIBUTE_RD(roles);
-	SETUP_PRIVATE_RPORT_ATTRIBUTE_RD(port_state);
+	SETUP_PRIVATE_RPORT_ATTRIBUTE_RW(port_state);
 	SETUP_PRIVATE_RPORT_ATTRIBUTE_RD(scsi_target_id);
 	SETUP_PRIVATE_RPORT_ATTRIBUTE_RW(fast_io_fail_tmo);
 
@@ -3373,7 +3422,8 @@ fc_remote_port_delete(struct fc_rport  *rport)
 
 	spin_lock_irqsave(shost->host_lock, flags);
 
-	if (rport->port_state != FC_PORTSTATE_ONLINE) {
+	if ((rport->port_state != FC_PORTSTATE_ONLINE) &&
+		(rport->port_state != FC_PORTSTATE_MARGINAL)) {
 		spin_unlock_irqrestore(shost->host_lock, flags);
 		return;
 	}
@@ -3515,7 +3565,8 @@ fc_timeout_deleted_rport(struct work_struct *work)
 	 * target, validate it still is. If not, tear down the
 	 * scsi_target on it.
 	 */
-	if ((rport->port_state == FC_PORTSTATE_ONLINE) &&
+	if (((rport->port_state == FC_PORTSTATE_ONLINE) ||
+		(rport->port_state == FC_PORTSTATE_MARGINAL)) &&
 	    (rport->scsi_target_id != -1) &&
 	    !(rport->roles & FC_PORT_ROLE_FCP_TARGET)) {
 		dev_printk(KERN_ERR, &rport->dev,
@@ -3658,7 +3709,8 @@ fc_scsi_scan_rport(struct work_struct *work)
 	struct fc_internal *i = to_fc_internal(shost->transportt);
 	unsigned long flags;
 
-	if ((rport->port_state == FC_PORTSTATE_ONLINE) &&
+	if (((rport->port_state == FC_PORTSTATE_ONLINE) ||
+		(rport->port_state == FC_PORTSTATE_MARGINAL)) &&
 	    (rport->roles & FC_PORT_ROLE_FCP_TARGET) &&
 	    !(i->f->disable_target_scan)) {
 		scsi_scan_target(&rport->dev, rport->channel,
@@ -3730,6 +3782,28 @@ int fc_block_scsi_eh(struct scsi_cmnd *cmnd)
 	return fc_block_rport(rport);
 }
 EXPORT_SYMBOL(fc_block_scsi_eh);
+
+/*
+ * fc_eh_should_retry_cmd - Checks if the cmd should be retried or not
+ * @scmd:        The SCSI command to be checked
+ *
+ * This checks the rport state to decide if a cmd is
+ * retryable.
+ *
+ * Returns: true if the rport state is not in marginal state.
+ */
+bool fc_eh_should_retry_cmd(struct scsi_cmnd *scmd)
+{
+	struct fc_rport *rport = starget_to_rport(scsi_target(scmd->device));
+
+	if ((rport->port_state != FC_PORTSTATE_ONLINE) &&
+		(scsi_cmd_to_rq(scmd)->cmd_flags & REQ_FAILFAST_TRANSPORT)) {
+		set_host_byte(scmd, DID_TRANSPORT_MARGINAL);
+		return false;
+	}
+	return true;
+}
+EXPORT_SYMBOL_GPL(fc_eh_should_retry_cmd);
 
 /**
  * fc_vport_setup - allocates and creates a FC virtual port.
@@ -4162,7 +4236,8 @@ static blk_status_t fc_bsg_rport_prep(struct fc_rport *rport)
 	    !(rport->flags & FC_RPORT_FAST_FAIL_TIMEDOUT))
 		return BLK_STS_RESOURCE;
 
-	if (rport->port_state != FC_PORTSTATE_ONLINE)
+	if ((rport->port_state != FC_PORTSTATE_ONLINE) &&
+		(rport->port_state != FC_PORTSTATE_MARGINAL))
 		return BLK_STS_IOERR;
 
 	return BLK_STS_OK;

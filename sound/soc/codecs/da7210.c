@@ -1059,7 +1059,7 @@ static struct snd_soc_dai_driver da7210_dai = {
 		.formats = DA7210_FORMATS,
 	},
 	.ops = &da7210_dai_ops,
-	.symmetric_rates = 1,
+	.symmetric_rate = 1,
 };
 
 static int da7210_probe(struct snd_soc_component *component)
@@ -1206,8 +1206,7 @@ static const struct regmap_config da7210_regmap_config_i2c = {
 	.cache_type = REGCACHE_RBTREE,
 };
 
-static int da7210_i2c_probe(struct i2c_client *i2c,
-			    const struct i2c_device_id *id)
+static int da7210_i2c_probe(struct i2c_client *i2c)
 {
 	struct da7210_priv *da7210;
 	int ret;
@@ -1250,7 +1249,7 @@ static struct i2c_driver da7210_i2c_driver = {
 	.driver = {
 		.name = "da7210",
 	},
-	.probe		= da7210_i2c_probe,
+	.probe_new	= da7210_i2c_probe,
 	.id_table	= da7210_i2c_id,
 };
 #endif
