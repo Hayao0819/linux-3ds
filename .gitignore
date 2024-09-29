@@ -20,6 +20,7 @@
 *.dtb
 *.dtbo
 *.dtb.S
+*.dtbo.S
 *.dwo
 *.elf
 *.gcno
@@ -37,6 +38,9 @@
 *.o
 *.o.*
 *.patch
+*.rmeta
+*.rpm
+*.rsi
 *.s
 *.so
 *.so.dbg
@@ -98,6 +102,7 @@ modules.order
 !.gitignore
 !.mailmap
 !.github
+!.rustfmt.toml
 
 #
 # Generated include files
@@ -163,3 +168,6 @@ x509.genkey
 
 # Documentation toolchain
 sphinx_*/
+
+# Rust analyzer configuration
+/rust-project.json
